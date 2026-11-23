@@ -21,6 +21,13 @@ final class Workspace: ObservableObject {
     @Published private(set) var sshConfigAliases: [String] = []
     /// ~/.ssh/config aliases the user removed from the sidebar (config file untouched).
     @Published private(set) var hiddenSSHConfigAliases: [String] = []
+    /// Git hosting aliases the user chose to list anyway.
+    @Published private(set) var shownGitAliases: Set<String> = []
+    /// Set to open 管理服务器.
+    @Published var managingServers = false
+    /// Drives 管理服务器 from the debug hooks: "select:<name>", "test",
+    /// "filter:<all|saved|ssh|hidden>", "query:<text>".
+    @Published var debugServerCommand: String?
     /// Set to open the host editor (new or existing host).
     @Published var editingHost: RemoteHost?
     /// Set to open the remote-session picker for a host.
@@ -34,7 +41,12 @@ final class Workspace: ObservableObject {
     @Published var managingAgents = false
     /// The Agent 总览 takes the place of the selected session's terminal.
     @Published var showingDashboard = false
+    /// ⌘P 跳转或新建, over the whole window.
+    @Published var showingQuickOpen = false
+    /// What the panel's field starts with (debug hook); emptied once used.
+    var quickOpenSeed = ""
     private var hookObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
 
     private var cancellables: [AgentSession.ID: AnyCancellable] = [:]
     /// Install sessions we're waiting on, to re-detect agents when they finish.
@@ -43,9 +55,22 @@ final class Workspace: ObservableObject {
 
     var selected: AgentSession? { sessions.first { $0.id == selectedID } }
 
-    /// Sessions in sidebar order: ungrouped first, then each group.
+    /// Sessions in sidebar order: this Mac's (ungrouped, then each group),
+    /// then each server's under it.
     var orderedSessions: [AgentSession] {
-        sessions.filter { $0.group == nil } + groups.flatMap { g in sessions.filter { $0.group == g } }
+        var out = sessions(in: nil) + groups.flatMap { sessions(in: $0) }
+        for host in sidebarServers { out += sessions(on: host) }
+        return out
+    }
+
+    /// Listed under 本机: local sessions, and any whose server was deleted.
+    private func isListedLocally(_ s: AgentSession) -> Bool {
+        guard let ref = s.remote else { return true }
+        return !hosts.contains { $0.id == ref.hostID }
+    }
+
+    func sessions(on host: RemoteHost) -> [AgentSession] {
+        sessions.filter { $0.remote?.hostID == host.id }
     }
 
     var attentionCount: Int {
@@ -75,6 +100,12 @@ final class Workspace: ObservableObject {
                     break
                 }
             }
+        }
+        // Commits and edits made outside Waitlight show up when you come back.
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sessions.forEach { $0.refreshGit() } }
         }
     }
 
@@ -110,7 +141,8 @@ final class Workspace: ObservableObject {
                                                self.relaunch(agentID: $0, conversationID: leaf.conversationID,
                                                              hadAgent: leaf.hadAgent)
                                            }
-                                       })
+                                       },
+                                       worktree: s.worktree)
             session.pinned = s.pinned == true
             add(session, select: false)
         }
@@ -254,20 +286,60 @@ final class Workspace: ObservableObject {
 
     /// Hand a task to a new agent without going to it: a session of its own,
     /// started with the prompt, opened behind whatever is on screen.
+    /// With `worktree`, the task first gets a git worktree on that new branch
+    /// (made from what `directory` has checked out) and the agent works there.
     @discardableResult
-    func dispatch(_ prompt: String, to kind: AgentKind, in directory: String) -> AgentSession? {
+    func dispatch(_ prompt: String, to kind: AgentKind, in directory: String,
+                  worktree branch: String? = nil) async throws -> AgentSession? {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, kind.canTakePrompt else { return nil }
         let (line, id) = kind.newConversation(prompt: text)
         guard let line else { return nil }
+        var worktree: WorktreeRef?
+        var note: String?
+        if let branch {
+            (worktree, note) = try await Task.detached(priority: .userInitiated) {
+                try Git.addWorktree(from: directory, branch: branch)
+            }.value
+        }
         let launch = AgentLaunch(kind: kind, line: withHooks(line, kind), conversationID: id, startsWorking: true)
-        let session = AgentSession(kind: kind, directory: directory, agent: launch)
+        let session = AgentSession(kind: kind, directory: worktree?.path ?? directory, agent: launch,
+                                   worktree: worktree)
         // Until the agent titles its own work, the task is the best name for it.
         session.customName = text.count > 40 ? String(text.prefix(40)) + "…" : text
+        session.setupNote = note
         add(session, select: false)
+        // The folder you picked, not the worktree, is where the next task likely goes.
         remember(directory)
         persist()
         return session
+    }
+
+    /// Close a session and remove its worktree folder. The branch and its
+    /// commits stay. Asks first when the worktree has uncommitted changes.
+    func closeRemovingWorktree(_ session: AgentSession) {
+        guard let worktree = session.worktree else { return close(session) }
+        Task {
+            let dirty = await Task.detached { Git.hasUncommittedChanges(worktree) }.value
+            if dirty {
+                let alert = NSAlert()
+                alert.messageText = "“\(worktree.branch)”还有没提交的改动"
+                alert.informativeText = "删除 worktree 会丢掉这些改动。已经提交的内容还在分支 \(worktree.branch) 上。"
+                alert.addButton(withTitle: "仍然删除")
+                alert.addButton(withTitle: "取消")
+                alert.buttons.first?.hasDestructiveAction = true
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            close(session)
+            do {
+                try await Task.detached { try Git.removeWorktree(worktree, force: dirty) }.value
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "没能删除 worktree"
+                alert.informativeText = "\(worktree.path.abbreviatingHome)\n\n\(error.localizedDescription)"
+                alert.runModal()
+            }
+        }
     }
 
     func togglePinned(_ session: AgentSession) {
@@ -333,21 +405,177 @@ final class Workspace: ObservableObject {
         let all = SSHConfigReader.aliases().filter { !saved.contains($0) }
         sshConfigAliases = all.filter { !hidden.contains($0) }
         hiddenSSHConfigAliases = all.filter { hidden.contains($0) }
+        shownGitAliases = hostStore.shownAliases()
+        resolveSSHDestinations(all + hosts.map(\.host))
     }
 
-    /// Remove an ~/.ssh/config alias from Waitlight's list. Only remembered
-    /// here; ~/.ssh/config itself is never touched.
-    func hideSSHConfigAlias(_ alias: String) {
+    // MARK: Servers in the sidebar
+
+    /// Where each ~/.ssh/config alias goes (`ssh -G`), for addresses and to
+    /// tell git hosting apart from machines you log in to.
+    @Published private(set) var sshDestinations: [String: SSHDestination] = [:]
+    /// Open or folded, per server section. Unset: open while it has sessions.
+    @Published var serverOpen: [UUID: Bool] = [:]
+    /// Each server's tmux / zellij sessions, looked up when you expand it.
+    @Published private(set) var remoteListings: [UUID: RemoteListing] = [:]
+
+    enum RemoteListing: Equatable {
+        case loading
+        case sessions([String], multiplexer: String?, at: Date)
+        case failed(String)
+    }
+
+    private func resolveSSHDestinations(_ names: [String]) {
+        let unique = Array(Set(names))
+        Task { [weak self] in
+            let found = await Task.detached(priority: .utility) { SSHConfigReader.destinations(unique) }.value
+            guard let self, self.sshDestinations != found else { return }
+            self.sshDestinations = found
+        }
+    }
+
+    /// Servers that get a section of their own: pinned ones, and any with
+    /// sessions open. In the order you saved them.
+    var sidebarServers: [RemoteHost] {
+        hosts.filter { host in host.isPinned || sessions.contains { $0.remote?.hostID == host.id } }
+    }
+
+    /// One row under 其他服务器.
+    enum ServerItem: Identifiable {
+        case host(RemoteHost)
+        case alias(String)
+
+        var id: String {
+            switch self {
+            case .host(let h): return "host:" + h.id.uuidString
+            case .alias(let a): return "alias:" + a
+            }
+        }
+        var name: String {
+            switch self {
+            case .host(let h): return h.name
+            case .alias(let a): return a
+            }
+        }
+    }
+
+    /// Everything else you can log in to, folded away under 其他服务器.
+    var otherServers: [ServerItem] {
+        let shown = Set(sidebarServers.map(\.id))
+        return hosts.filter { !shown.contains($0.id) && $0.visibility != .hidden }.map(ServerItem.host)
+            + sshConfigAliases.filter { !isAutoHidden(alias: $0) }.map(ServerItem.alias)
+    }
+
+    /// ~/.ssh/config entries for git (github.com…), left out of the sidebar
+    /// unless you chose to show them.
+    var gitHostingAliases: [String] {
+        sshConfigAliases.filter { isAutoHidden(alias: $0) }
+    }
+
+    private func isAutoHidden(alias: String) -> Bool {
+        isGitHosting(alias: alias) && !shownGitAliases.contains(alias)
+    }
+
+    /// Where an unsaved ~/.ssh/config alias shows: 自动 (under 其他服务器) or
+    /// 隐藏 (removed by you, or git hosting you haven't asked to show).
+    func visibility(ofAlias alias: String) -> RemoteHost.SidebarVisibility {
+        hiddenSSHConfigAliases.contains(alias) || isAutoHidden(alias: alias) ? .hidden : .auto
+    }
+
+    func setVisibility(_ visibility: RemoteHost.SidebarVisibility, of host: RemoteHost) {
+        var h = host
+        h.sidebar = visibility
+        saveHost(h)
+    }
+
+    /// 固定 saves the alias as a server (returned); 自动 / 隐藏 are only
+    /// remembered here. ~/.ssh/config itself is never touched.
+    @discardableResult
+    func setVisibility(_ visibility: RemoteHost.SidebarVisibility, ofAlias alias: String) -> RemoteHost? {
+        if visibility == .pinned { return pin(alias: alias) }
         var hidden = hostStore.hiddenAliases()
-        hidden.insert(alias)
+        var shown = hostStore.shownAliases()
+        if visibility == .hidden {
+            hidden.insert(alias)
+            shown.remove(alias)
+        } else {
+            hidden.remove(alias)
+            if isGitHosting(alias: alias) { shown.insert(alias) }
+        }
         hostStore.saveHiddenAliases(hidden)
+        hostStore.saveShownAliases(shown)
         reloadSSHConfig()
+        return nil
     }
 
-    /// Show every hidden ~/.ssh/config alias again.
-    func unhideSSHConfigAliases() {
-        hostStore.saveHiddenAliases([])
-        reloadSSHConfig()
+    func isGitHosting(alias: String) -> Bool {
+        (sshDestinations[alias] ?? SSHDestination(hostName: alias)).isGitHosting
+    }
+
+    /// The address to show: what the alias resolves to when the server is
+    /// just an ~/.ssh/config name.
+    func address(of host: RemoteHost) -> String {
+        if host.user == nil, host.port == nil, let d = sshDestinations[host.host] { return d.address }
+        return host.address
+    }
+
+    func address(ofAlias alias: String) -> String {
+        sshDestinations[alias]?.address ?? alias
+    }
+
+    func setPinned(_ host: RemoteHost, _ pinned: Bool) {
+        setVisibility(pinned ? .pinned : .auto, of: host)
+    }
+
+    /// Pinning an ~/.ssh/config alias saves it as a server (the config file is untouched).
+    @discardableResult
+    func pin(alias: String) -> RemoteHost {
+        var h = RemoteHost.fromSSHConfig(alias: alias)
+        h.sidebar = .pinned
+        saveHost(h)
+        return h
+    }
+
+    /// 测试连接 in 管理服务器: one ssh round trip, timed. A saved server's
+    /// session list is kept for the sidebar and ⌘P too.
+    func testConnection(_ host: RemoteHost) async -> Result<(info: SSH.ServerInfo, seconds: Double), SSH.ProbeError> {
+        let start = Date()
+        let result = await SSH.inspect(host)
+        let seconds = Date().timeIntervalSince(start)
+        if case .success(let info) = result, hosts.contains(where: { $0.id == host.id }) {
+            remoteListings[host.id] = .sessions(info.sessions, multiplexer: info.multiplexer(for: host.persistence),
+                                                at: Date())
+        }
+        return result.map { (info: $0, seconds: seconds) }
+    }
+
+    /// What the host editor's 保存 does, from wherever it was opened.
+    func saveEdited(_ host: RemoteHost, password: String?) {
+        if let password { HostKeychain.setPassword(password, for: host.id, label: host.name) }
+        saveHost(host)
+    }
+
+    /// Look up the server's tmux / zellij sessions (one ssh, no terminal),
+    /// unless a recent answer is at hand. A failure is only retried when
+    /// asked (`force`), never on its own.
+    func loadRemoteSessions(_ host: RemoteHost, force: Bool = false) {
+        switch remoteListings[host.id] {
+        case .loading: return
+        case .sessions(_, _, let at) where !force && Date().timeIntervalSince(at) < 60: return
+        case .failed where !force: return
+        default: break
+        }
+        remoteListings[host.id] = .loading
+        Task {
+            let result = await SSH.inspect(host)
+            switch result {
+            case .success(let info):
+                remoteListings[host.id] = .sessions(info.sessions, multiplexer: info.multiplexer(for: host.persistence),
+                                                    at: Date())
+            case .failure(let e):
+                remoteListings[host.id] = .failed(e.message.isEmpty ? "连接失败" : e.message)
+            }
+        }
     }
 
     func saveHost(_ host: RemoteHost) {
@@ -414,25 +642,35 @@ final class Workspace: ObservableObject {
         let session = makeRemoteSession(host, sessionName: sessionName)
         add(session, select: true)
         persist()
+        noteConnected(host)
         return session
+    }
+
+    /// For 上次连接 in 管理服务器. Written straight to hosts.json: a full
+    /// saveHost would re-read ~/.ssh/config on every connect.
+    private func noteConnected(_ host: RemoteHost) {
+        guard let i = hosts.firstIndex(where: { $0.id == host.id }) else { return }
+        hosts[i].lastConnected = Date()
+        hostStore.save(hosts)
     }
 
     /// Connecting an ~/.ssh/config alias saves it as a server, so the session
     /// can be reconnected and restored later.
     @discardableResult
-    func connect(alias: String) -> AgentSession {
+    func connect(alias: String, sessionName: String? = nil) -> AgentSession {
         let host = hosts.first { $0.host == alias } ?? {
             let h = RemoteHost.fromSSHConfig(alias: alias)
             saveHost(h)
             return h
         }()
-        return connect(host)
+        return connect(host, sessionName: sessionName)
     }
 
     /// Reconnect with the host's *current* settings (they may have been edited).
     func reconnect(_ session: AgentSession) {
         guard let host = host(for: session) else { return }
         session.reconnect(with: SSH.commandLine(for: host, sessionName: session.remote?.sessionName))
+        noteConnected(host)
     }
 
     // MARK: Events bubbled up from sessions
@@ -490,8 +728,10 @@ final class Workspace: ObservableObject {
         persist()
     }
 
+    /// This Mac's sessions in a group (nil: ungrouped). Servers' sessions
+    /// are listed under their server instead.
     func sessions(in group: String?) -> [AgentSession] {
-        sessions.filter { $0.group == group }
+        sessions.filter { isListedLocally($0) && $0.group == group }
     }
 
     func move(_ session: AgentSession, toGroup group: String?) {
@@ -530,7 +770,7 @@ final class Workspace: ObservableObject {
         var section = sessions(in: group)
         section.move(fromOffsets: from, toOffset: to)
         var it = section.makeIterator()
-        sessions = sessions.map { $0.group == group ? it.next()! : $0 }
+        sessions = sessions.map { isListedLocally($0) && $0.group == group ? it.next()! : $0 }
         persist()
     }
 
@@ -560,7 +800,8 @@ final class Workspace: ObservableObject {
                              group: $0.group, layout: $0.root.layout, remote: $0.remote,
                              conversationID: first?.conversationID,
                              hadAgent: first != nil ? true : nil,
-                             pinned: $0.pinned ? true : nil)
+                             pinned: $0.pinned ? true : nil,
+                             worktree: $0.worktree)
             },
             recentDirectories: recentDirectories,
             groups: groups))
@@ -649,6 +890,8 @@ final class WorkspaceStore {
             var conversationID: String?
             var hadAgent: Bool?
             var pinned: Bool?
+            /// The task's worktree, if it was handed out with one.
+            var worktree: WorktreeRef?
         }
         var sessions: [Session] = []
         var recentDirectories: [String] = []

@@ -103,12 +103,21 @@ final class AgentSession: ObservableObject, Identifiable {
     let kind: AgentKind
 
     @Published var title: String
-    @Published var directory: String
+    @Published var directory: String {
+        didSet { if directory != oldValue { refreshGit() } }
+    }
     @Published var status: SessionStatus = .running
     @Published var customName: String?
     @Published var group: String?
     /// Kept at the top of the Agent 总览.
     @Published var pinned = false
+    /// The task's own git worktree, when it was handed out with one.
+    @Published var worktree: WorktreeRef?
+    /// What setting up the worktree copied or skipped (not saved).
+    var setupNote: String?
+    /// The folder's branch and what changed in it; nil outside a repository
+    /// and for SSH sessions. Refreshed at turn ends, not continuously.
+    @Published private(set) var git: GitSnapshot?
     /// Bumped whenever the split structure changes, so the host re-lays out.
     @Published private(set) var layoutVersion = 0
     @Published private(set) var zoomedPane: PaneView?
@@ -169,6 +178,29 @@ final class AgentSession: ObservableObject, Identifiable {
         return Self.agentAware(t, agent: agent.kind)
     }
     var folderName: String { remoteLabel ?? (directory as NSString).lastPathComponent }
+
+    /// What's running in the session's pane on screen, if it is a shell busy with a command.
+    var shellCommand: ShellCommand? { (focusedPane ?? panes.first)?.shellCommand }
+
+    /// A shell session's name in its one-line sidebar row: yours, else the
+    /// folder (`~` at home). For a server, the remote folder from its title.
+    var shellName: String {
+        if let customName { return customName }
+        if remote != nil {
+            let t = title.trimmingCharacters(in: .whitespaces)
+            // "user@host: ~/src" or "~/src"
+            let path = t.range(of: ": ").map { String(t[$0.upperBound...]) } ?? t
+            if Self.looksLikePath(path) { return path == "~" ? "~" : (path as NSString).lastPathComponent }
+            return remote?.sessionName ?? remoteName ?? title
+        }
+        return directory == NSHomeDirectory() ? "~" : (directory as NSString).lastPathComponent
+    }
+
+    /// A shell's idle title is its folder ("~/src/shop", "me@box: /srv").
+    static func looksLikePath(_ title: String) -> Bool {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("~") || t.hasPrefix("/") || t.contains(": ~") || t.contains(": /") || t.contains(":~")
+    }
     var isDisconnected: Bool { if case .disconnected = status { return true } else { return false } }
     var panes: [PaneView] { root.leaves }
 
@@ -181,9 +213,10 @@ final class AgentSession: ObservableObject, Identifiable {
          layout: PaneNode.Layout? = nil, agent: AgentLaunch? = nil,
          restoreAgent: ((PaneNode.Layout) -> AgentLaunch?)? = nil, startCommand: String? = nil,
          remote: RemoteRef? = nil, remoteName: String? = nil,
-         remoteLabel: String? = nil, connectCommand: String? = nil) {
+         remoteLabel: String? = nil, connectCommand: String? = nil, worktree: WorktreeRef? = nil) {
         self.kind = kind
         self.directory = directory
+        self.worktree = worktree
         self.title = remoteName ?? kind.name
         self.customName = customName
         self.group = group
@@ -214,6 +247,33 @@ final class AgentSession: ObservableObject, Identifiable {
         focusedPane = root.leaves.first { $0.isPrimary } ?? root.leaves.first
         panes.forEach(wire)
         panes.forEach(discoverCodexSession)
+        refreshGit()
+    }
+
+    // MARK: Git
+
+    private var gitRefresh: Task<Void, Never>?
+    private var gitRefreshAgain = false
+
+    /// Look at the folder's branch and changes again, off the main thread.
+    /// Runs at moments things likely changed (a turn ended, a command
+    /// finished, the folder changed, you came back to Waitlight), never on a timer.
+    func refreshGit() {
+        guard remote == nil else { return }
+        guard gitRefresh == nil else { gitRefreshAgain = true; return }
+        let dir = directory
+        // Count from the branch point only while inside the task's worktree.
+        let base = worktree.flatMap { dir.hasPrefix($0.path) ? $0.base : nil }
+        gitRefresh = Task { [weak self] in
+            let snap = await Task.detached(priority: .utility) { Git.snapshot(of: dir, base: base) }.value
+            guard let self else { return }
+            if self.git != snap { self.git = snap }
+            self.gitRefresh = nil
+            if self.gitRefreshAgain {
+                self.gitRefreshAgain = false
+                self.refreshGit()
+            }
+        }
     }
 
     private static func makePane(input: String?, directory: String, isPrimary: Bool,
@@ -243,6 +303,12 @@ final class AgentSession: ObservableObject, Identifiable {
             paneTitles[ObjectIdentifier(pane)] = t
             if pane === focusedPane { publishTitleSoon() }
             adopt(title: t, in: pane)
+            // Shell integration titles a running command with its command line.
+            if pane.agent == nil, let since = pane.commandSubmittedAt, !Self.looksLikePath(t),
+               pane.shellCommand?.text != t {
+                objectWillChange.send()
+                pane.shellCommand = ShellCommand(text: t, since: pane.shellCommand?.since ?? since)
+            }
 
         case .pwd:
             if pane === focusedPane, let dir = pane.terminal.currentDirectory, dir != directory { directory = dir }
@@ -270,6 +336,12 @@ final class AgentSession: ObservableObject, Identifiable {
                     setActivity(.exited, in: pane)
                 }
             }
+            refreshGit()
+            if pane.shellCommand != nil || pane.commandSubmittedAt != nil {
+                objectWillChange.send()
+                pane.shellCommand = nil
+                pane.commandSubmittedAt = nil
+            }
             if case .needsAttention = status { return }
             if pane === focusedPane { status = .finished(exitCode: code) }
 
@@ -277,6 +349,7 @@ final class AgentSession: ObservableObject, Identifiable {
             break
 
         case .userSubmitted:
+            if pane.agent == nil, pane.shellCommand == nil { pane.commandSubmittedAt = Date() }
             switch pane.agent?.activity {
             case .ready, .done, .waiting: setActivity(.working, in: pane)
             default: break
@@ -339,6 +412,7 @@ final class AgentSession: ObservableObject, Identifiable {
         guard let agent = pane.agent, agent.activity != activity else { return }
         objectWillChange.send()
         agent.activity = activity
+        if activity != .working { refreshGit() }
     }
 
     /// Shell integration titles a running command with its command line. If

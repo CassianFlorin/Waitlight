@@ -139,7 +139,13 @@ struct AppCommands: Commands {
             .disabled(!hasSession)
         }
 
+        // ⌘P is 跳转或新建 here, not Print.
+        CommandGroup(replacing: .printItem) {}
+
         CommandMenu("会话") {
+            Button("跳转或新建…") { workspace.showingQuickOpen.toggle() }
+                .keyboardShortcut("p", modifiers: .command)
+            Divider()
             Button(menu.showingDashboard ? "回到会话" : "Agent 总览") { workspace.showingDashboard.toggle() }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             Button("下一个 Agent") { workspace.cycleAgent(1) }
@@ -157,7 +163,8 @@ struct AppCommands: Commands {
             Button("重新连接") { workspace.selected.map(workspace.reconnect) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!menu.selectedDisconnected)
-            Button("添加服务器…") { workspace.editingHost = RemoteHost(name: "", host: "") }
+            Button("添加服务器…") { workspace.editingHost = RemoteHost.new() }
+            Button("管理服务器…") { workspace.managingServers = true }
             Divider()
             Button("重命名会话…") { workspace.renaming = workspace.selected }
                 .disabled(!hasSession)

@@ -11,6 +11,11 @@ final class PaneView: NSView {
     /// The agent running in this pane, if any. Changed only through the
     /// owning AgentSession, which publishes the change.
     var agent: PaneAgent?
+    /// In a shell pane: the command running now, from shell integration's
+    /// title, and since when. nil at the prompt.
+    var shellCommand: ShellCommand?
+    /// Return was pressed at the prompt; the next title is the command's.
+    var commandSubmittedAt: Date?
 
     /// Events the pane doesn't handle itself go up to the session.
     var onEvent: ((PaneView, TerminalEvent) -> Void)?
@@ -369,3 +374,9 @@ final class SearchBar: NSVisualEffectView, NSSearchFieldDelegate {
     @objc private func doClose() { onClose?() }
 }
 
+
+/// A command running in a shell pane, for the sidebar's one-line shell rows.
+struct ShellCommand: Equatable {
+    var text: String
+    var since: Date
+}

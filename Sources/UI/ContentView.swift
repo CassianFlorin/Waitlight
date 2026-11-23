@@ -54,6 +54,9 @@ struct ContentView: View {
                 .help(showMonitor ? "隐藏性能监视器（⌥⌘P）" : "显示性能监视器（⌥⌘P）")
             }
         }
+        .overlay {
+            if workspace.showingQuickOpen { QuickOpenView() }
+        }
         .background(GlassWindowConfigurator())
         .preferredColorScheme(.dark)
         .sheet(item: $workspace.renaming) { session in
@@ -69,9 +72,11 @@ struct ContentView: View {
         }
         .sheet(item: $workspace.editingHost) { host in
             HostEditor(host: host, isNew: !workspace.hosts.contains { $0.id == host.id }) { saved, password in
-                if let password { HostKeychain.setPassword(password, for: saved.id, label: saved.name) }
-                workspace.saveHost(saved)
+                workspace.saveEdited(saved, password: password)
             }
+        }
+        .sheet(isPresented: $workspace.managingServers) {
+            ServerManagerView()
         }
         .sheet(item: $workspace.pickingSessionFor) { host in
             RemoteSessionPicker(host: host) { name in workspace.connect(host, sessionName: name) }
