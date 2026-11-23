@@ -49,18 +49,21 @@ Every agent carries a status light. Four colors, four meanings.
 
 - Waiting comes first: Agents that need you sort to the top, and the row says what each is waiting for and for how long.
 - Answer without leaving: Select a row to see the last lines of its terminal. Type and press Return, or press one of its option keys, and the answer is sent.
-- Hand out the next task: Pick the agent and the folder in the bar, write the task, press Return. A new agent starts in the background and you stay on the list.
+- Hand out the next task: Pick the agent and the folder in the bar, write the task, press Return. A new agent starts in the background and you stay on the list. In a git repository the task gets its own worktree and branch by default, so agents working side by side never touch each other's files.
 - **Filter**: the field at the top matches name, agent, or folder. You can also group by folder.
 - **Pin**: right-click to pin an agent. It stays at the top whatever it is doing, and stays pinned after a relaunch.
+- **Branch and changes**: a session in a git repository shows its branch and lines changed (+31 −9), and the filter matches branches too. For a task in a worktree, right-click to close it and remove the worktree; the branch stays.
 - **Stop**: a working agent can be stopped for this turn.
 - **Quick keys**: when it asks you to choose, `1 2 3 ↩ esc` next to the reply field answer its prompt.
 - **In and out**: `↩` or a double-click opens its session with the cursor in its pane. `esc`, or any session in the sidebar, returns to the terminal.
 
 ## Local and remote, in the same sidebar.
 
-Hosts from ~/.ssh/config show up under Servers, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was.
+The sidebar is grouped by machine: one section for this Mac, one for each server with sessions open. Hosts from ~/.ssh/config work as they are, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was.
 
-- Servers lists hosts you add and every alias in ~/.ssh/config, including files pulled in with Include. You can set the address, user, port, key or ssh-agent, and ProxyJump. Passwords go in the Keychain.
+- Servers include hosts you add and every alias in ~/.ssh/config, including files pulled in with Include. You can set the address, user, port, key or ssh-agent, and ProxyJump. Passwords go in the Keychain.
+- A pinned server always has its own section. The rest appear while they have sessions open and otherwise sit under Other servers. Open a server with nothing running yet and it lists the tmux or zellij sessions already on it, each with an Attach button.
+- Manage Servers lists every server in one table. Search it, set each one to pinned, auto, or hidden, test the connection, or attach to a session on the server. ~/.ssh/config is never modified.
 - Auto is the default: if the machine already has tmux or zellij, Waitlight uses it. If not, you get a normal login shell, with no prompt to install anything.
 - On reconnect, a session that was in tmux or zellij attaches again, so the agent is still there. Without a multiplexer, it logs in again in the directory you set, and the earlier processes are gone.
 - The performance panel follows the selected session. For SSH it samples that server over one connection: a small POSIX shell loop reading /proc, still with nothing to install. Remote sampling currently supports Linux only.
@@ -79,12 +82,13 @@ Relaunch the app, or start an agent that had exited, and Claude Code, Grok, and 
 
 ~/.config/ghostty/config
 
-Fonts, themes, and keybinds come straight from your Ghostty config. Changes made in Waitlight's settings are layered on top and never written back to the file.
+Fonts, themes, and keybinds come straight from your Ghostty config. Changes made in Waitlight's settings are layered on top and never written back to the file. Text a theme makes too dim, such as zsh suggestions, is brightened so it stays readable.
 
 ## Keep your hands on the keyboard.
 
 - `⌘⇧J` — Jump to the next session that needs you
 - `⇧⌘A` — Open the agent overview
+- `⌘P` — Jump or open: sessions, servers, and recent folders in one field
 - `⌥⌘[ ⌥⌘]` — Previous / next agent, across sessions
 - `⌘D ⌘⇧D` — Split right / split down
 - `⇧⌘O` — Resume an earlier conversation for this folder
@@ -102,7 +106,8 @@ Fonts, themes, and keybinds come straight from your Ghostty config. Changes made
 - Status belongs to the pane, not the session. Type claude or codex into a split yourself and Waitlight notices: it gets its own status and its own row in the overview.
 - If the clipboard holds a screenshot, ⌘V saves a PNG and pastes the path, which is how you hand an image to an agent. Copied or dragged files paste as shell-escaped paths.
 - Chinese, Japanese, and Korean input methods work, with the candidate window anchored at the cursor.
-- Sessions can be renamed or moved into a group. A group is a collapsible section in the sidebar.
+- Sessions can be renamed or moved into a group. A group is a collapsible section under This Mac; a server's sessions are already grouped by server.
+- A plain shell takes one line in the sidebar: its folder and the command running in it, with how long it has run, the last command's exit code, or a bell on the right.
 - The performance panel also lists Docker containers. You can open logs, a shell inside a container, and start, stop, or restart one. Sessions opened from a container are not restored on the next launch.
 - Waitlight checks for an update once a day, and you can check from the menu. Updates come from GitHub Releases. Each one is EdDSA-signed and must carry the same Developer ID as the app you have. If an agent is mid-turn, it asks before restarting.
 
@@ -130,12 +135,13 @@ Fonts, themes, and keybinds come straight from your Ghostty config. Changes made
 
 - The server editor shows a command preview and a Test Connection button, which reports the OS, whether tmux or zellij is installed, and existing sessions.
 - You can force tmux or zellij per server, or attach to an existing session.
-- Right-click an entry from ~/.ssh/config to remove it from the list. It is only hidden in Waitlight; the file is not edited, and hidden entries can be restored.
+- Right-click a server to pin or hide it. Hidden ones show up only in `⌘P` and Manage Servers, and can be restored. Git hosting entries (github.com and the like) start hidden.
 - The ssh integration from Ghostty works as usual (ssh-terminfo, ssh-env).
 
 #### Performance panel
 
 - CPU (per core, plus load average on servers), memory, GPU (Apple GPU, or NVIDIA through nvidia-smi on servers), network, and disk.
+- On servers, disk shows free space per data volume, so a NAS shows /volume1 or its ZFS pools, not just /.
 - Session usage: the process tree of each session on the Mac, the busiest processes on a server.
 - Choose which monitors to show and how often they refresh (1, 2, or 5 seconds) from the panel menu.
 - The panel is closed by default. While it is closed or the window is hidden, nothing is sampled and no connection is kept.

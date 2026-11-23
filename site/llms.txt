@@ -7,7 +7,9 @@
 - Built-in agents: Claude Code, Codex, Gemini, Grok, opencode, Qwen Code, Cursor CLI, Copilot CLI, Droid, Amp, Crush, Aider. Any other CLI can be added. Waitlight detects which ones are on the login shell's PATH and lists only those; missing ones can be installed from inside the app.
 - Per-agent status: working, waiting for you, turn done, exited. Claude Code reports exactly through hooks passed with `--settings` at launch; Codex and Grok can opt in to status hooks; other agents are tracked from generic terminal signals.
 - Agent overview (`⇧⌘A`): every agent across sessions on one screen, waiting ones first, with a reply field and a bar to hand out new tasks. `⌘⇧J` jumps to the next agent waiting for you.
-- Remote servers: hosts from `~/.ssh/config` show up next to local sessions. tmux or zellij is used when the server has one, so a dropped connection reattaches with the agent still running. Nothing is installed on the server.
+- Worktree per task: a task handed out in a git repository gets its own git worktree and branch by default, so agents running side by side never touch each other's files. Sessions show their branch and lines changed.
+- Jump or open (`⌘P`): one field for open sessions, servers, recent folders and common commands.
+- Remote servers: the sidebar is grouped by machine (this Mac, then one section per server); hosts from `~/.ssh/config` work as they are, and a Manage Servers window sets each one to pinned, auto or hidden. tmux or zellij is used when the server has one, so a dropped connection reattaches with the agent still running. Nothing is installed on the server.
 - Restores sessions, splits, groups and SSH connections on relaunch; Claude Code, Codex and Grok return to the same conversation.
 - Privacy: no analytics or telemetry. The only connection the app makes on its own is checking GitHub Releases for updates.
 
