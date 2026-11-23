@@ -5,7 +5,7 @@ struct SidebarView: View {
     @EnvironmentObject private var workspace: Workspace
     @State private var renamingGroup: String?
     @State private var newGroupFor: AgentSession?
-    @State private var serversExpanded = true
+    @AppStorage("sidebar.othersExpanded") private var othersExpanded = false
 
     var body: some View {
         // While the Agent 总览 is up no session is "the current one": clicking
@@ -19,27 +19,51 @@ struct SidebarView: View {
                     workspace.selectedID = id
                 }
             })) {
-            Section("会话") {
+            Section {
                 rows(for: nil)
+            } header: {
+                MachineHeader(count: workspace.sessions(in: nil).count
+                              + workspace.groups.reduce(0) { $0 + workspace.sessions(in: $1).count })
             }
-            ForEach(workspace.groups, id: \.self) { group in
+            ForEach(workspace.groups.filter { !workspace.sessions(in: $0).isEmpty }, id: \.self) { group in
                 Section(isExpanded: expandedBinding(group)) {
                     rows(for: group)
                 } header: {
-                    Text(group)
-                        .contextMenu {
-                            Button("重命名分组…") { renamingGroup = group }
-                            Button("解散分组") { workspace.ungroup(group) }
-                        }
+                    HStack(spacing: 4) {
+                        Text("本机").foregroundStyle(.tertiary)
+                        Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+                        Text(group)
+                    }
+                    .contextMenu {
+                        Button("重命名分组…") { renamingGroup = group }
+                        Button("解散分组") { workspace.ungroup(group) }
+                    }
                 }
             }
-            Section(isExpanded: $serversExpanded) {
-                ServerList()
+            ForEach(workspace.sidebarServers) { host in
+                Section(isExpanded: serverBinding(host)) {
+                    let open = workspace.sessions(on: host)
+                    if open.isEmpty {
+                        RemoteListingRows(host: host)
+                    } else {
+                        ForEach(open) { session in
+                            SessionRow(session: session)
+                                .tag(session.id)
+                                .contextMenu { menu(for: session) }
+                        }
+                    }
+                } header: {
+                    ServerHeader(host: host)
+                }
+            }
+            Section(isExpanded: $othersExpanded) {
+                OtherServers()
             } header: {
                 HStack {
-                    Text("服务器")
+                    Text("其他服务器")
+                    Text("\(workspace.otherServers.count)").foregroundStyle(.tertiary)
                     Spacer()
-                    Button { workspace.editingHost = RemoteHost(name: "", host: "") } label: {
+                    Button { workspace.editingHost = RemoteHost.new() } label: {
                         Image(systemName: "plus")
                     }
                     .buttonStyle(.borderless)
@@ -48,6 +72,28 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Button { workspace.showingQuickOpen = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                    Text("跳转或新建…")
+                    Spacer()
+                    Text("⌘P").font(.caption.monospaced())
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.white.opacity(0.08)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
+            .help("跳转到会话、连接服务器、打开文件夹（⌘P）")
+        }
         .sheet(item: Binding(get: { renamingGroup.map(GroupRef.init) }, set: { renamingGroup = $0?.name })) { ref in
             RenameSheet(title: "重命名分组", initial: ref.name) { workspace.renameGroup(ref.name, to: $0) }
         }
@@ -57,6 +103,12 @@ struct SidebarView: View {
                 if !n.isEmpty { workspace.move(session, toGroup: n) }
             }
         }
+    }
+
+    private func serverBinding(_ host: RemoteHost) -> Binding<Bool> {
+        Binding(
+            get: { workspace.serverOpen[host.id] ?? !workspace.sessions(on: host).isEmpty },
+            set: { workspace.serverOpen[host.id] = $0 })
     }
 
     @ViewBuilder
@@ -90,16 +142,7 @@ struct SidebarView: View {
             Divider()
         }
         Button("重命名…") { workspace.renaming = session }
-        Menu("移到分组") {
-            ForEach(workspace.groups.filter { $0 != session.group }, id: \.self) { g in
-                Button(g) { workspace.move(session, toGroup: g) }
-            }
-            if !workspace.groups.isEmpty { Divider() }
-            Button("新建分组…") { newGroupFor = session }
-            if session.group != nil {
-                Button("移出分组") { workspace.move(session, toGroup: nil) }
-            }
-        }
+        if session.remote == nil { groupMenu(for: session) }
         Divider()
         if session.remote == nil {
             Button("在 Finder 中显示") {
@@ -111,6 +154,23 @@ struct SidebarView: View {
         }
         Divider()
         Button("关闭", role: .destructive) { workspace.close(session) }
+        if session.worktree != nil {
+            Button("关闭并删除 worktree…", role: .destructive) { workspace.closeRemovingWorktree(session) }
+        }
+    }
+
+    @ViewBuilder
+    private func groupMenu(for session: AgentSession) -> some View {
+        Menu("移到分组") {
+            ForEach(workspace.groups.filter { $0 != session.group }, id: \.self) { g in
+                Button(g) { workspace.move(session, toGroup: g) }
+            }
+            if !workspace.groups.isEmpty { Divider() }
+            Button("新建分组…") { newGroupFor = session }
+            if session.group != nil {
+                Button("移出分组") { workspace.move(session, toGroup: nil) }
+            }
+        }
     }
 
     private func expandedBinding(_ group: String) -> Binding<Bool> {
@@ -142,6 +202,15 @@ struct SessionRow: View {
     }
 
     var body: some View {
+        // A plain shell is one line; agents keep their state and branch.
+        if session.agentPanes.isEmpty {
+            ShellRow(session: session)
+        } else {
+            agentBody
+        }
+    }
+
+    private var agentBody: some View {
         HStack(spacing: 8) {
             Image(systemName: session.kind.symbol)
                 .frame(width: 18)
@@ -164,6 +233,9 @@ struct SessionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                if let git = session.git {
+                    GitLine(git: git, isWorktree: session.worktree != nil)
+                }
                 if listsAgents {
                     ForEach(session.agentPanes, id: \.terminal.paneID) { pane in
                         AgentLine(session: session, pane: pane)
@@ -198,6 +270,9 @@ struct SessionRow: View {
 
     private var helpText: String {
         var parts = [session.directory.abbreviatingHome]
+        if let wt = session.worktree {
+            parts.append("worktree：\(wt.branch)，从 \(wt.base) 分出，主仓库 \(wt.repo.abbreviatingHome)")
+        }
         if case .needsAttention(let msg?) = session.status { parts.append(msg) }
         let agents = session.agentPanes.compactMap(\.agent)
         for agent in agents {
@@ -315,7 +390,7 @@ struct NewSessionMenu: View {
                     }
                 }
                 Divider()
-                Button("添加服务器…") { workspace.editingHost = RemoteHost(name: "", host: "") }
+                Button("添加服务器…") { workspace.editingHost = RemoteHost.new() }
                 if !workspace.hiddenSSHConfigAliases.isEmpty {
                     Button("恢复已删除的 ssh config 条目") { workspace.unhideSSHConfigAliases() }
                 }
@@ -345,58 +420,213 @@ enum NewSessionPanel {
     }
 }
 
-/// Saved servers plus ~/.ssh/config aliases, inside the sidebar's 服务器 section.
-struct ServerList: View {
+/// The 本机 section header: this Mac, and a menu to open a session here.
+private struct MachineHeader: View {
+    let count: Int
+    @EnvironmentObject private var workspace: Workspace
+    @EnvironmentObject private var catalog: AgentCatalog
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "laptopcomputer")
+            Text("本机")
+            Text("\(count)").foregroundStyle(.tertiary)
+            Spacer()
+            Menu {
+                ForEach(catalog.available) { kind in
+                    Menu {
+                        Button("选择文件夹…") { NewSessionPanel.present(kind: kind, in: workspace) }
+                        if !workspace.recentDirectories.isEmpty {
+                            Divider()
+                            ForEach(workspace.recentDirectories, id: \.self) { dir in
+                                Button(dir.abbreviatingHome) { workspace.open(kind: kind, directory: dir) }
+                            }
+                        }
+                    } label: {
+                        Label(kind.name, systemImage: kind.symbol)
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("在本机新建会话")
+        }
+    }
+}
+
+/// A server's section header: its name, whether its sessions are
+/// connected, and a button for another session on it.
+private struct ServerHeader: View {
+    let host: RemoteHost
+    @EnvironmentObject private var workspace: Workspace
+
+    private var open: [AgentSession] { workspace.sessions(on: host) }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: host.symbol)
+            Text(host.name).lineLimit(1)
+            state
+            Spacer()
+            Button { workspace.connect(host) } label: { Image(systemName: "plus") }
+                .buttonStyle(.borderless)
+                .help("在 \(host.name) 上新建会话")
+        }
+        .help(workspace.address(of: host))
+        .contextMenu {
+            Button("新会话") { workspace.connect(host) }
+            if host.persistence.usesSessionName {
+                Button("附加到已有会话…") { workspace.pickingSessionFor = host }
+            }
+            Divider()
+            Button("编辑…") { workspace.editingHost = host }
+            if host.isPinned {
+                Button("不固定（没有会话时收进“其他服务器”）") { workspace.setPinned(host, false) }
+            } else {
+                Button("固定到侧边栏") { workspace.setPinned(host, true) }
+            }
+        }
+    }
+
+    @ViewBuilder private var state: some View {
+        if open.isEmpty {
+            Text("未连接").foregroundStyle(.tertiary)
+        } else if open.allSatisfy(\.isDisconnected) {
+            Circle().fill(Color.orange).frame(width: 6, height: 6).help("已断开")
+        } else {
+            Circle().fill(Color.green.opacity(0.85)).frame(width: 6, height: 6).help("已连接")
+        }
+    }
+}
+
+/// Under a server with nothing open: the tmux / zellij sessions already on
+/// it, to attach with one click. Looked up when the section is opened.
+private struct RemoteListingRows: View {
+    let host: RemoteHost
     @EnvironmentObject private var workspace: Workspace
 
     var body: some View {
-        ForEach(workspace.hosts) { host in
-            HostRow(host: host, openCount: workspace.sessions.filter { $0.remote?.hostID == host.id }.count)
-                .contextMenu {
-                    Button("连接（新会话）") { workspace.connect(host) }
-                    if host.persistence.usesSessionName {
-                        Button("附加到已有会话…") { workspace.pickingSessionFor = host }
+        Group {
+            switch workspace.remoteListings[host.id] {
+            case .sessions(let names, let mux, _) where !names.isEmpty:
+                ForEach(names, id: \.self) { name in
+                    HStack(spacing: 6) {
+                        Image(systemName: "circle.dashed").font(.caption).foregroundStyle(.tertiary).frame(width: 18)
+                        Text(name).lineLimit(1)
+                        Text(mux ?? "").font(.caption.monospaced()).foregroundStyle(.tertiary)
+                        Spacer(minLength: 4)
+                        Button("附加") { workspace.connect(host, sessionName: name) }
+                            .controlSize(.small)
                     }
-                    Divider()
-                    Button("编辑…") { workspace.editingHost = host }
-                    Button("复制") {
-                        var copy = host
-                        copy.id = UUID()
-                        copy.name += " 副本"
-                        workspace.editingHost = copy
-                    }
-                    Divider()
-                    Button("删除", role: .destructive) { confirmDelete(host) }
+                    .help("附加到 \(host.name) 上的 \(mux ?? "") 会话 \(name)")
                 }
-        }
-        ForEach(workspace.sshConfigAliases, id: \.self) { alias in
-            HStack(spacing: 8) {
-                Image(systemName: "doc.text").frame(width: 18).foregroundStyle(.tertiary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(alias).lineLimit(1)
-                    Text("~/.ssh/config").font(.caption).foregroundStyle(.tertiary)
+            case .sessions(_, let mux, _):
+                HStack(spacing: 6) {
+                    Text(mux == nil ? "没有 tmux / zellij，断开后不能接回" : "服务器上还没有会话")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button("新会话") { workspace.connect(host) }.controlSize(.small)
                 }
-                Spacer()
-                ConnectButton { workspace.connect(alias: alias) }
+            case .failed(let message):
+                HStack(spacing: 6) {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button("重试") { workspace.loadRemoteSessions(host, force: true) }.controlSize(.small)
+                }
+                .help(message)
+            default:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("正在看服务器上的会话…").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            .padding(.vertical, 2)
-            .contextMenu {
-                Button("连接") { workspace.connect(alias: alias) }
+        }
+        .onAppear { workspace.loadRemoteSessions(host) }
+    }
+}
+
+/// 其他服务器: servers without a section of their own, one line each. Git
+/// hosting entries from ~/.ssh/config are left out unless you ask.
+private struct OtherServers: View {
+    @EnvironmentObject private var workspace: Workspace
+    @State private var showGitHosting = false
+
+    var body: some View {
+        ForEach(workspace.otherServers) { item in
+            row(item)
+        }
+        let git = workspace.gitHostingAliases
+        if !git.isEmpty {
+            Button {
+                showGitHosting.toggle()
+            } label: {
+                Text(showGitHosting ? "收起 git 托管条目" : gitHint(git))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            if showGitHosting {
+                ForEach(git, id: \.self) { row(.alias($0)).opacity(0.7) }
+            }
+        }
+    }
+
+    private func row(_ item: Workspace.ServerItem) -> some View {
+        HStack(spacing: 6) {
+            switch item {
+            case .host(let host):
+                Image(systemName: host.symbol).frame(width: 18).foregroundStyle(.secondary)
+                Text(host.name).lineLimit(1).layoutPriority(1)
+                let address = workspace.address(of: host)
+                if address != host.name {
+                    Text(address).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
+            case .alias(let alias):
+                Image(systemName: "server.rack").frame(width: 18).foregroundStyle(.tertiary)
+                Text(alias).lineLimit(1).layoutPriority(1)
+                let address = workspace.address(ofAlias: alias)
+                if address != alias {
+                    Text(address).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            ConnectButton { connect(item) }
+        }
+        .padding(.vertical, 1)
+        .contextMenu {
+            Button("连接") { connect(item) }
+            switch item {
+            case .host(let host):
+                Button("固定到侧边栏") { workspace.setPinned(host, true) }
+                Button("编辑…") { workspace.editingHost = host }
+                Divider()
+                Button("删除", role: .destructive) { confirmDelete(host) }
+            case .alias(let alias):
+                Button("固定到侧边栏") { workspace.pin(alias: alias) }
                 Button("保存为服务器…") { workspace.editingHost = .fromSSHConfig(alias: alias) }
                 Divider()
                 Button("从列表中删除", role: .destructive) { confirmHide(alias) }
-                if !workspace.hiddenSSHConfigAliases.isEmpty {
-                    Button(restoreHiddenTitle) { workspace.unhideSSHConfigAliases() }
-                }
+            }
+            if !workspace.hiddenSSHConfigAliases.isEmpty {
+                Button(restoreHiddenTitle) { workspace.unhideSSHConfigAliases() }
             }
         }
-        if workspace.hosts.isEmpty && workspace.sshConfigAliases.isEmpty {
-            Button("添加服务器…") { workspace.editingHost = RemoteHost(name: "", host: "") }
-                .buttonStyle(.link)
-        }
-        if workspace.sshConfigAliases.isEmpty && !workspace.hiddenSSHConfigAliases.isEmpty {
-            Button(restoreHiddenTitle) { workspace.unhideSSHConfigAliases() }
-                .buttonStyle(.link)
+    }
+
+    private func gitHint(_ git: [String]) -> String {
+        if git.count == 1 { return "\(git[0]) 是 git 托管，已隐藏 · 显示" }
+        return "\(git.prefix(2).joined(separator: "、"))\(git.count > 2 ? " 等 \(git.count) 个" : "") git 托管已隐藏 · 显示"
+    }
+
+    private func connect(_ item: Workspace.ServerItem) {
+        switch item {
+        case .host(let host): workspace.connect(host)
+        case .alias(let alias): workspace.connect(alias: alias)
         }
     }
 
@@ -423,32 +653,75 @@ struct ServerList: View {
     }
 }
 
-struct HostRow: View {
-    let host: RemoteHost
-    let openCount: Int
+/// A plain shell in one line: its folder (or your name for it), the command
+/// running now, and on the right how long it has run, how it ended, or
+/// that it rang.
+private struct ShellRow: View {
+    @ObservedObject var session: AgentSession
     @EnvironmentObject private var workspace: Workspace
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: host.symbol).frame(width: 18).foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(host.name).lineLimit(1)
-                    if let p = host.provider {
-                        Text(p)
-                            .font(.caption2)
-                            .padding(.horizontal, 4)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 3))
-                    }
-                }
-                Text(openCount > 0 ? "\(host.address) · \(openCount) 个已打开" : host.address)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        HStack(spacing: 6) {
+            Image(systemName: session.remote == nil ? session.kind.symbol : "terminal")
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+            Text(session.shellName)
+                .lineLimit(1)
+                .layoutPriority(1)
+            if let command = session.shellCommand {
+                Text(command.text)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if session.panes.count > 1 {
+                Text("\(session.panes.count) 个窗格").font(.caption).foregroundStyle(.tertiary)
             }
-            Spacer()
-            ConnectButton { workspace.connect(host) }
+            Spacer(minLength: 4)
+            trailing
         }
-        .padding(.vertical, 2)
-        .help(host.address)
+        .padding(.vertical, 1)
+        .help(help)
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if session.isDisconnected {
+            Button { workspace.reconnect(session) } label: {
+                Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange)
+            }
+            .buttonStyle(.borderless)
+            .help("已断开，点击重新连接（会重新附加服务器上的会话）")
+        } else if case .needsAttention = session.status {
+            HStack(spacing: 3) {
+                PulsingDot(color: .orange, size: 6)
+                Text("响铃").foregroundStyle(.orange)
+            }
+            .font(.caption)
+        } else if let command = session.shellCommand {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(Self.age(from: command.since, to: context.date))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.blue)
+            }
+        } else if case .finished(let code) = session.status, code != 0, code != -1 {
+            Text("退出 \(code)").font(.caption).foregroundStyle(.red)
+        }
+    }
+
+    private var help: String {
+        var parts = [session.remote == nil ? session.directory.abbreviatingHome : (session.remoteLabel ?? "")]
+        if let command = session.shellCommand { parts.append("正在运行：\(command.text)") }
+        if let git = session.git { parts.append("分支 \(git.branch)") }
+        if case .needsAttention(let msg?) = session.status { parts.append(msg) }
+        return parts.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    static func age(from start: Date, to now: Date) -> String {
+        let s = max(0, Int(now.timeIntervalSince(start)))
+        if s < 60 { return "刚开始" }
+        if s < 3600 { return "\(s / 60) 分" }
+        if s < 86400 { return "\(s / 3600) 时" }
+        return "\(s / 86400) 天"
     }
 }
 
@@ -606,4 +879,36 @@ private struct Shimmer: ViewModifier {
 
 extension View {
     func shimmer(active: Bool = true) -> some View { modifier(Shimmer(active: active)) }
+}
+
+/// A folder's branch and its changes: `⑂ wl/fix-tax +31 −9`. A task's own
+/// worktree gets a tinted branch icon.
+struct GitLine: View {
+    let git: GitSnapshot
+    let isWorktree: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(isWorktree ? AnyShapeStyle(Color.teal) : AnyShapeStyle(.tertiary))
+            Text(git.branch)
+                .truncationMode(.middle)
+            if git.hasChanges {
+                Text("+\(git.added)").foregroundStyle(.green)
+                    .layoutPriority(1)
+                Text("−\(git.removed)").foregroundStyle(.red.opacity(0.85))
+                    .layoutPriority(1)
+            }
+        }
+        .font(.caption2.monospaced())
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .help(help)
+    }
+
+    private var help: String {
+        let what = isWorktree ? "这个任务自己的 worktree，分支 \(git.branch)" : "分支 \(git.branch)"
+        guard git.hasChanges else { return what + "，没有改动" }
+        return what + "：\(git.files) 个文件，+\(git.added) −\(git.removed)" + (isWorktree ? "（从分出的地方算起）" : "（未提交）")
+    }
 }

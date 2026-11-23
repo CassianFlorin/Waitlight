@@ -59,11 +59,31 @@ struct RemoteHost: Codable, Identifiable, Hashable {
     var term: String = "xterm-256color"
     /// Extra raw ssh arguments, e.g. "-o StrictHostKeyChecking=accept-new".
     var extraArguments: String?
+    /// Whether the sidebar always shows it (pinned) or only while it has
+    /// sessions (auto). nil: from before this existed, see `isPinned`.
+    var sidebar: SidebarVisibility?
+
+    enum SidebarVisibility: String, Codable {
+        case pinned, auto
+    }
+
+    /// Servers you added yourself stay in the sidebar; ones saved because
+    /// you connected an ~/.ssh/config alias show while they have sessions.
+    var isPinned: Bool {
+        sidebar.map { $0 == .pinned } ?? (name != host)
+    }
 
     init(id: UUID = UUID(), name: String, host: String) {
         self.id = id
         self.name = name
         self.host = host
+    }
+
+    /// A blank server for the editor: added by hand, so it stays in the sidebar.
+    static func new() -> RemoteHost {
+        var h = RemoteHost(name: "", host: "")
+        h.sidebar = .pinned
+        return h
     }
 
     /// Tolerant decoding: a hosts.json written by an older (or newer) version
@@ -84,6 +104,7 @@ struct RemoteHost: Codable, Identifiable, Hashable {
         persistence = (try? c.decodeIfPresent(Persistence.self, forKey: .persistence)) ?? .auto
         term = try c.decodeIfPresent(String.self, forKey: .term) ?? "xterm-256color"
         extraArguments = try c.decodeIfPresent(String.self, forKey: .extraArguments)
+        sidebar = try? c.decodeIfPresent(SidebarVisibility.self, forKey: .sidebar)
     }
 
     /// "user@host:port" for display.
@@ -105,7 +126,9 @@ struct RemoteHost: Codable, Identifiable, Hashable {
 
     /// A blank host pre-filled from an ~/.ssh/config alias.
     static func fromSSHConfig(alias: String) -> RemoteHost {
-        RemoteHost(name: alias, host: alias)
+        var h = RemoteHost(name: alias, host: alias)
+        h.sidebar = .auto
+        return h
     }
 }
 
@@ -153,9 +176,66 @@ struct HostStore {
     }
 }
 
+/// Where an ~/.ssh/config alias really goes, as `ssh -G` resolves it.
+struct SSHDestination: Equatable {
+    var hostName: String
+    var user: String?
+    var port: Int?
+
+    /// github.com, GitLab, Bitbucket and the like: in ~/.ssh/config for git,
+    /// not for logging in, so the sidebar leaves them out.
+    var isGitHosting: Bool {
+        if user == "git" { return true }
+        let h = hostName.lowercased()
+        return ["github.com", "gitlab.com", "bitbucket.org", "gitee.com", "codeberg.org",
+                "ssh.dev.azure.com", "vs-ssh.visualstudio.com", "git.sr.ht"]
+            .contains { h == $0 || h.hasSuffix("." + $0) }
+    }
+
+    /// "user@host:port" without the parts ssh would use anyway.
+    var address: String {
+        var s = hostName
+        if let user, user != NSUserName() { s = "\(user)@\(s)" }
+        if let port, port != 22 { s += ":\(port)" }
+        return s
+    }
+}
+
 /// Reads Host aliases out of ~/.ssh/config (following Include), so hosts you
 /// already configured show up without retyping anything.
 enum SSHConfigReader {
+    /// Resolve aliases with `ssh -G` (OpenSSH's own reading of the config,
+    /// Match blocks and all). Blocking; a few ms per alias. No connection is made.
+    static func destinations(_ aliases: [String]) -> [String: SSHDestination] {
+        var out: [String: SSHDestination] = [:]
+        for alias in aliases {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            p.arguments = ["-G", alias]
+            p.standardInput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            guard (try? p.run()) != nil else { continue }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            guard p.terminationStatus == 0 else { continue }
+            var dest = SSHDestination(hostName: alias)
+            for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+                let kv = line.split(separator: " ", maxSplits: 1)
+                guard kv.count == 2 else { continue }
+                switch kv[0] {
+                case "hostname": dest.hostName = String(kv[1])
+                case "user": dest.user = String(kv[1])
+                case "port": dest.port = Int(kv[1])
+                default: break
+                }
+            }
+            out[alias] = dest
+        }
+        return out
+    }
+
     static func aliases() -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var seen = Set<String>()

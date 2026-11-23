@@ -54,6 +54,9 @@ struct ContentView: View {
                 .help(showMonitor ? "隐藏性能监视器（⌥⌘P）" : "显示性能监视器（⌥⌘P）")
             }
         }
+        .overlay {
+            if workspace.showingQuickOpen { QuickOpenView() }
+        }
         .background(GlassWindowConfigurator())
         .preferredColorScheme(.dark)
         .sheet(item: $workspace.renaming) { session in

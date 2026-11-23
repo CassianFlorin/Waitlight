@@ -26,6 +26,14 @@ import SwiftUI
 ///   reply:<n>:<text>           answer the n-th agent (sidebar order) as the dashboard's reply field does
 ///   open:<n>                   open the n-th agent as the dashboard does
 ///   dispatch:<agentID>:<dir>:<prompt>   hand a task to a new agent, as the dashboard's field does
+///   wtdispatch:<agentID>:<dir>:<prompt> the same, in a new worktree with the branch named after the task
+///   git                        log each session's worktree, branch and change counts
+///   rmworktree:<n>             close session n (sidebar order) and remove its worktree
+///   sidebar                    log the sidebar's servers and each session's one-line shell info
+///   serveropen:<host name>     open / fold that server's sidebar section
+///   others:1|0|reset           open / fold 其他服务器 (reset forgets the setting)
+///   qo:<query>                 open 跳转或新建 with that query (qo: closes it)
+///   qokey:down|up|tab|return|esc   a key press into that panel's field
 ///   pin:<n> | stop:<n> | press:<n>:<keys>   pin / interrupt / press keys in the n-th agent
 ///   cycle:<±1>                 next / previous agent
 ///   hook:<agentID>:install|uninstall   the status hook file of Grok / Codex
@@ -67,7 +75,10 @@ enum DebugHooks {
         switch verb {
         case "binding": pane?.terminal.performBindingAction(arg)
         case "paste": pane?.terminal.insertPasteText(arg.replacingOccurrences(of: "\\n", with: "\r"))
-        case "type": pane?.terminal.typeText(arg.replacingOccurrences(of: "\\n", with: "\r"))
+        case "type":
+            pane?.terminal.typeText(arg.replacingOccurrences(of: "\\n", with: "\r"))
+            // A real Return key reports a submit (TerminalSurfaceView.keyDown); typed text doesn't.
+            if arg.contains("\\n"), let pane { pane.onEvent?(pane, .userSubmitted) }
         case "pastefrom":
             // Same conversion as ⌘V, but from a named pasteboard so tests
             // don't clobber the user's clipboard.
@@ -163,9 +174,63 @@ enum DebugHooks {
         case "dispatch":
             let parts = arg.split(separator: ":", maxSplits: 2).map(String.init)
             if parts.count == 3, let kind = workspace.catalog.agent(id: parts[0]) {
-                let s = workspace.dispatch(parts[2], to: kind, in: parts[1])
-                log("dispatch \(s == nil ? "refused" : "ok") canTakePrompt=\(kind.canTakePrompt)")
+                Task {
+                    let s = try? await workspace.dispatch(parts[2], to: kind, in: parts[1])
+                    log("dispatch \(s == nil ? "refused" : "ok") canTakePrompt=\(kind.canTakePrompt)")
+                }
             }
+        case "wtdispatch":
+            let parts = arg.split(separator: ":", maxSplits: 2).map(String.init)
+            if parts.count == 3, let kind = workspace.catalog.agent(id: parts[0]) {
+                Task {
+                    do {
+                        let s = try await workspace.dispatch(parts[2], to: kind, in: parts[1],
+                                                             worktree: Git.branchName(for: parts[2]))
+                        log("wtdispatch ok dir=\(s?.directory ?? "-") worktree=\(String(describing: s?.worktree)) note=\(s?.setupNote ?? "-")")
+                    } catch {
+                        log("wtdispatch failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        case "serveropen":
+            if let host = workspace.hosts.first(where: { $0.name == arg }) {
+                workspace.serverOpen[host.id] = !(workspace.serverOpen[host.id] ?? !workspace.sessions(on: host).isEmpty)
+            }
+        case "qo":
+            // Open 跳转或新建 with this query (empty arg: close it).
+            if arg.isEmpty { workspace.showingQuickOpen = false } else {
+                workspace.quickOpenSeed = arg
+                workspace.showingQuickOpen = true
+            }
+        case "qokey":
+            // A real key press into the panel's field: down, up, tab, return, esc.
+            let codes: [String: (UInt16, String)] = ["down": (125, "\u{F701}"), "up": (126, "\u{F700}"),
+                                                     "tab": (48, "\t"), "return": (36, "\r"), "esc": (53, "\u{1b}")]
+            if let (code, chars) = codes[arg], let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
+               let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                            windowNumber: window.windowNumber, context: nil, characters: chars,
+                                            charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) {
+                window.sendEvent(event)
+                log("qokey \(arg) responder=\(String(describing: window.firstResponder.map { type(of: $0) }))")
+            }
+        case "others":
+            // The 其他服务器 section's open state (an @AppStorage key).
+            if arg == "reset" { UserDefaults.standard.removeObject(forKey: "sidebar.othersExpanded") }
+            else { UserDefaults.standard.set(arg == "1", forKey: "sidebar.othersExpanded") }
+        case "sidebar":
+            log("servers: \(workspace.sidebarServers.map(\.name))")
+            log("others: \(workspace.otherServers.map(\.name)) git: \(workspace.gitHostingAliases)")
+            log("listings: \(workspace.remoteListings.map { "\($0.key): \($0.value)" }) open: \(workspace.serverOpen)")
+            for (i, s) in workspace.orderedSessions.enumerated() {
+                log("   \(i + 1) \(s.remote == nil ? "local" : "remote") name=\(s.shellName) cmd=\(s.shellCommand?.text ?? "-") status=\(s.status)")
+            }
+        case "git":
+            for (i, s) in workspace.orderedSessions.enumerated() {
+                log("   \(i + 1) \(s.displayName) dir=\(s.directory) git=\(String(describing: s.git)) worktree=\(String(describing: s.worktree))")
+            }
+        case "rmworktree":
+            let order = workspace.orderedSessions
+            if let n = Int(arg), order.indices.contains(n - 1) { workspace.closeRemovingWorktree(order[n - 1]) }
         case "pin", "stop", "press":
             let parts = arg.split(separator: ":", maxSplits: 1).map(String.init)
             let entries = workspace.agentEntries
@@ -194,7 +259,7 @@ enum DebugHooks {
             if let h = workspace.hosts.first(where: { $0.name == arg }) { workspace.connect(h) }
             else if workspace.sshConfigAliases.contains(arg) { workspace.connect(alias: arg) }
         case "edithost":
-            workspace.editingHost = workspace.hosts.first(where: { $0.name == arg }) ?? RemoteHost(name: "", host: "")
+            workspace.editingHost = workspace.hosts.first(where: { $0.name == arg }) ?? RemoteHost.new()
         case "inspect":
             // Same path as the editor's 测试连接 button.
             if let h = workspace.hosts.first(where: { $0.name == arg }) {

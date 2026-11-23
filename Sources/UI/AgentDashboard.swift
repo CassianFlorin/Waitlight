@@ -30,7 +30,7 @@ struct AgentEntry: Identifiable {
     func matches(_ query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return true }
-        return [title, agent.kind.name, directory, session.displayName]
+        return [title, agent.kind.name, directory, session.displayName, session.git?.branch ?? ""]
             .contains { $0.localizedCaseInsensitiveContains(q) }
     }
 }
@@ -109,7 +109,8 @@ struct AgentDashboard: View {
         let groups = groups
         VStack(spacing: 0) {
             header
-            AgentDispatchBar(suggestedDirectory: selected?.directory)
+            // A task's worktree is that task's; the next task starts from the main checkout.
+            AgentDispatchBar(suggestedDirectory: selected.map { $0.session.worktree?.repo ?? $0.directory })
             if groups.isEmpty {
                 empty
             } else {
@@ -141,6 +142,11 @@ struct AgentDashboard: View {
                         Divider()
                         Button("重命名会话…") { workspace.renaming = entry.session }
                         Button("关闭会话", role: .destructive) { workspace.close(entry.session) }
+                        if entry.session.worktree != nil {
+                            Button("关闭会话并删除 worktree…", role: .destructive) {
+                                workspace.closeRemovingWorktree(entry.session)
+                            }
+                        }
                     }
                 } primaryAction: { ids in
                     if let entry = workspace.agentEntries.first(where: { ids.contains($0.id) }) { open(entry) }
@@ -177,7 +183,7 @@ struct AgentDashboard: View {
             .fixedSize()
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("筛选：名称、Agent、文件夹", text: $query)
+                TextField("筛选：名称、Agent、文件夹、分支", text: $query)
                     .textFieldStyle(.plain)
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -225,15 +231,31 @@ struct AgentDashboard: View {
 }
 
 /// Hand a task to a new agent: pick the agent and the folder, write the task,
-/// Return. You stay on the list, so several can go out in a row.
+/// Return. You stay on the list, so several can go out in a row. In a git
+/// repository the task can get a worktree of its own (on by default), so
+/// agents working side by side never touch each other's files.
 private struct AgentDispatchBar: View {
     /// The selected row's folder: the likeliest place for the next task.
     let suggestedDirectory: String?
     @EnvironmentObject private var workspace: Workspace
     @EnvironmentObject private var catalog: AgentCatalog
     @AppStorage("dashboard.dispatchAgent") private var agentID = ""
+    @AppStorage("dashboard.isolate") private var isolate = true
     @State private var directory: String?
     @State private var prompt = ""
+    /// Typed by you; empty means the one made from the task.
+    @State private var branch = ""
+    /// The folder's checkout, if it is in a git repository.
+    @State private var repo: RepoInfo?
+    @State private var busy = false
+    @State private var failure: String?
+    /// What the last worktree got copied from .worktreeinclude, or skipped.
+    @State private var note: String?
+
+    private struct RepoInfo: Equatable {
+        var branch: String
+        var container: String
+    }
 
     /// Only agents that can be started with a prompt.
     private var agents: [AgentKind] { catalog.available.filter(\.canTakePrompt) }
@@ -241,45 +263,142 @@ private struct AgentDispatchBar: View {
     private var folder: String {
         directory ?? suggestedDirectory ?? workspace.recentDirectories.first ?? NSHomeDirectory()
     }
+    private var typedBranch: String { branch.trimmingCharacters(in: .whitespaces) }
+    private var autoBranch: String { Git.branchName(for: prompt) }
+    private var effectiveBranch: String { typedBranch.isEmpty ? autoBranch : typedBranch }
 
     var body: some View {
         if let agent {
-            HStack(spacing: 8) {
-                Picker("Agent", selection: Binding(get: { agent.id }, set: { agentID = $0 })) {
-                    ForEach(agents) { a in Label(a.name, systemImage: a.symbol).tag(a.id) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                Menu {
-                    ForEach(workspace.recentDirectories, id: \.self) { dir in
-                        Button(dir.abbreviatingHome) { directory = dir }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Picker("Agent", selection: Binding(get: { agent.id }, set: { agentID = $0 })) {
+                        ForEach(agents) { a in Label(a.name, systemImage: a.symbol).tag(a.id) }
                     }
-                    if !workspace.recentDirectories.isEmpty { Divider() }
-                    Button("选择文件夹…", action: pickFolder)
-                } label: {
-                    Label((folder as NSString).lastPathComponent, systemImage: "folder")
+                    .labelsHidden()
+                    .fixedSize()
+                    Menu {
+                        ForEach(workspace.recentDirectories, id: \.self) { dir in
+                            Button(dir.abbreviatingHome) { directory = dir }
+                        }
+                        if !workspace.recentDirectories.isEmpty { Divider() }
+                        Button("选择文件夹…", action: pickFolder)
+                    } label: {
+                        Label((folder as NSString).lastPathComponent, systemImage: "folder")
+                    }
+                    .fixedSize()
+                    .help(folder.abbreviatingHome)
+                    TextField("派一个新任务给 \(agent.name)，回车开始", text: $prompt)
+                        .textFieldStyle(.plain)
+                        .onSubmit(send)
+                        .disabled(busy)
+                    if busy {
+                        ProgressView().controlSize(.small)
+                        Text(isolating ? "正在建 worktree…" : "正在启动…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if catalog.isInstalled(agent) == false {
+                        Label("未安装", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
-                .fixedSize()
-                .help(folder.abbreviatingHome)
-                TextField("派一个新任务给 \(agent.name)，回车开始", text: $prompt)
-                    .textFieldStyle(.plain)
-                    .onSubmit(send)
-                if catalog.isInstalled(agent) == false {
-                    Label("未安装", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+
+                if let repo {
+                    Divider()
+                    worktreeRow(repo)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                }
+                if let note, failure == nil {
+                    Label(note, systemImage: note.contains("跳过") ? "exclamationmark.triangle" : "doc.on.doc")
+                        .font(.caption)
+                        .foregroundStyle(note.contains("跳过") ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 6)
+                }
+                if let failure {
+                    Label(failure, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 6)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+            .task(id: folder) {
+                failure = nil
+                note = nil
+                let dir = folder
+                repo = await Task.detached(priority: .utility) { () -> RepoInfo? in
+                    guard let main = Git.mainCheckout(of: dir), let branch = Git.branch(in: dir) else { return nil }
+                    return RepoInfo(branch: branch, container: main + ".worktrees")
+                }.value
+            }
         }
     }
 
+    private var isolating: Bool { isolate && repo != nil }
+
+    private func worktreeRow(_ repo: RepoInfo) -> some View {
+        HStack(spacing: 10) {
+            Toggle("独立 worktree", isOn: $isolate)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .help("在新分支的 git worktree 里干活，不碰这个文件夹现在的工作区")
+            if isolate {
+                HStack(spacing: 4) {
+                    Text("分支").foregroundStyle(.secondary)
+                    TextField("分支", text: $branch, prompt: Text(autoBranch))
+                        .textFieldStyle(.plain)
+                        .font(.caption.monospaced())
+                        .frame(minWidth: 140, maxWidth: 240)
+                        .onSubmit(send)
+                }
+                Text("基于 \(repo.branch)")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text("→ " + ((repo.container as NSString).appendingPathComponent(Git.folderName(for: effectiveBranch))).abbreviatingHome)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .help("从主仓库复制 .worktreeinclude 里列出的、被 git 忽略的文件（和 Orca 同一个格式）；没有这个文件时复制根目录的 .env*")
+            } else {
+                Text("直接在 \((folder as NSString).lastPathComponent) 现在的工作区里改（\(repo.branch)）")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+    }
+
     private func send() {
-        guard let agent, workspace.dispatch(prompt, to: agent, in: folder) != nil else { return }
-        prompt = ""
+        guard !busy, let agent, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let text = prompt, dir = folder
+        let worktree = isolating ? effectiveBranch : nil
+        busy = true
+        failure = nil
+        note = nil
+        Task {
+            defer { busy = false }
+            do {
+                if let session = try await workspace.dispatch(text, to: agent, in: dir, worktree: worktree) {
+                    prompt = ""
+                    branch = ""
+                    note = session.setupNote
+                }
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
     }
 
     private func pickFolder() {
@@ -311,6 +430,10 @@ private struct AgentDashboardRow: View {
             if showsFolder {
                 Text((entry.directory as NSString).lastPathComponent)
                     .foregroundStyle(.tertiary).lineLimit(1)
+            }
+            if let git = entry.session.git {
+                GitLine(git: git, isWorktree: entry.session.worktree != nil)
+                    .fixedSize()
             }
             if entry.session.pinned {
                 Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.tertiary)
