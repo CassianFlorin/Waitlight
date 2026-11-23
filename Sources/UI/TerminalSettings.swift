@@ -66,6 +66,24 @@ enum TerminalSettings {
         "U+20000-U+2FA1F",
     ].joined(separator: ",")
 
+    /// Many themes make palette 8 ("bright black") barely lighter than the
+    /// background, and that is the color zsh-autosuggestions, fish and most
+    /// prompts use for hints and suggestions. Aardvark Ink's #3a4152 on
+    /// #0f141f is 1.8:1, and the glass window lightens the background further,
+    /// so suggestions vanish. Ghostty can lift any text below a contrast ratio
+    /// against its cell background; 3 is the WCAG large-text minimum and still
+    /// keeps hint text visibly dimmer than normal output.
+    static let defaultMinimumContrast = 3.0
+
+    /// Our default, unless the user's own Ghostty config already sets one.
+    private static var minimumContrast: Double? {
+        guard let cfg = GhosttyRuntime.userConfig() else { return defaultMinimumContrast }
+        defer { ghostty_config_free(cfg) }
+        let own: Double? = GhosttyRuntime.value(cfg, "minimum-contrast")
+        if let own, own > 1 { return nil }
+        return defaultMinimumContrast
+    }
+
     /// Ghostty config lines for the options that were changed.
     static var ghosttyOverlay: String {
         let o = load()
@@ -92,6 +110,7 @@ enum TerminalSettings {
         if let v = o.optionAsAlt { lines.append("macos-option-as-alt = \(v)") }
         if let v = o.copyOnSelect { lines.append("copy-on-select = \(v ? "clipboard" : "false")") }
         if let v = o.mouseHide { lines.append("mouse-hide-while-typing = \(b(v))") }
+        if let v = minimumContrast { lines.append("minimum-contrast = \(v)") }
         guard !lines.isEmpty else { return "" }
         return "# Written by Waitlight (设置 → 终端). Edits here are overwritten.\n"
             + lines.joined(separator: "\n") + "\n"
