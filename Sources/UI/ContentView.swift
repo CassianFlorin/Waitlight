@@ -72,9 +72,11 @@ struct ContentView: View {
         }
         .sheet(item: $workspace.editingHost) { host in
             HostEditor(host: host, isNew: !workspace.hosts.contains { $0.id == host.id }) { saved, password in
-                if let password { HostKeychain.setPassword(password, for: saved.id, label: saved.name) }
-                workspace.saveHost(saved)
+                workspace.saveEdited(saved, password: password)
             }
+        }
+        .sheet(isPresented: $workspace.managingServers) {
+            ServerManagerView()
         }
         .sheet(item: $workspace.pickingSessionFor) { host in
             RemoteSessionPicker(host: host) { name in workspace.connect(host, sessionName: name) }

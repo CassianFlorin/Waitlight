@@ -35,6 +35,14 @@ struct RemoteHost: Codable, Identifiable, Hashable {
             case .zellij: return "zellij（服务器需已安装）"
             }
         }
+        var shortLabel: String {
+            switch self {
+            case .auto: return "自动"
+            case .none: return "不保持"
+            case .tmux: return "tmux"
+            case .zellij: return "zellij"
+            }
+        }
         /// Whether sessions get a name we can re-attach to.
         var usesSessionName: Bool { self != .none }
     }
@@ -59,12 +67,22 @@ struct RemoteHost: Codable, Identifiable, Hashable {
     var term: String = "xterm-256color"
     /// Extra raw ssh arguments, e.g. "-o StrictHostKeyChecking=accept-new".
     var extraArguments: String?
-    /// Whether the sidebar always shows it (pinned) or only while it has
-    /// sessions (auto). nil: from before this existed, see `isPinned`.
+    /// Whether the sidebar always shows it (pinned), only while it has
+    /// sessions (auto), or never unless it has sessions open (hidden: found
+    /// with ⌘P and in 管理服务器). nil: from before this existed, see `isPinned`.
     var sidebar: SidebarVisibility?
+    /// When a session last connected to it. nil: never, or before this existed.
+    var lastConnected: Date?
 
-    enum SidebarVisibility: String, Codable {
-        case pinned, auto
+    enum SidebarVisibility: String, Codable, CaseIterable {
+        case pinned, auto, hidden
+        var label: String {
+            switch self {
+            case .pinned: return "固定"
+            case .auto: return "自动"
+            case .hidden: return "隐藏"
+            }
+        }
     }
 
     /// Servers you added yourself stay in the sidebar; ones saved because
@@ -72,6 +90,8 @@ struct RemoteHost: Codable, Identifiable, Hashable {
     var isPinned: Bool {
         sidebar.map { $0 == .pinned } ?? (name != host)
     }
+
+    var visibility: SidebarVisibility { sidebar ?? (isPinned ? .pinned : .auto) }
 
     init(id: UUID = UUID(), name: String, host: String) {
         self.id = id
@@ -105,6 +125,7 @@ struct RemoteHost: Codable, Identifiable, Hashable {
         term = try c.decodeIfPresent(String.self, forKey: .term) ?? "xterm-256color"
         extraArguments = try c.decodeIfPresent(String.self, forKey: .extraArguments)
         sidebar = try? c.decodeIfPresent(SidebarVisibility.self, forKey: .sidebar)
+        lastConnected = try? c.decodeIfPresent(Date.self, forKey: .lastConnected)
     }
 
     /// "user@host:port" for display.
@@ -170,9 +191,28 @@ struct HostStore {
     }
 
     func saveHiddenAliases(_ aliases: Set<String>) {
+        write(aliases, to: hiddenURL)
+    }
+
+    /// Git hosting aliases (github.com…) you chose to show anyway: shown-ssh-aliases.json.
+    private var shownURL: URL {
+        AppPaths.support.appendingPathComponent("shown-ssh-aliases.json")
+    }
+
+    func shownAliases() -> Set<String> {
+        guard let data = try? Data(contentsOf: shownURL),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(list)
+    }
+
+    func saveShownAliases(_ aliases: Set<String>) {
+        write(aliases, to: shownURL)
+    }
+
+    private func write(_ aliases: Set<String>, to url: URL) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted]
-        if let data = try? enc.encode(aliases.sorted()) { try? data.write(to: hiddenURL, options: .atomic) }
+        if let data = try? enc.encode(aliases.sorted()) { try? data.write(to: url, options: .atomic) }
     }
 }
 

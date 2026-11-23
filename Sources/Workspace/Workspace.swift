@@ -21,6 +21,13 @@ final class Workspace: ObservableObject {
     @Published private(set) var sshConfigAliases: [String] = []
     /// ~/.ssh/config aliases the user removed from the sidebar (config file untouched).
     @Published private(set) var hiddenSSHConfigAliases: [String] = []
+    /// Git hosting aliases the user chose to list anyway.
+    @Published private(set) var shownGitAliases: Set<String> = []
+    /// Set to open 管理服务器.
+    @Published var managingServers = false
+    /// Drives 管理服务器 from the debug hooks: "select:<name>", "test",
+    /// "filter:<all|saved|ssh|hidden>", "query:<text>".
+    @Published var debugServerCommand: String?
     /// Set to open the host editor (new or existing host).
     @Published var editingHost: RemoteHost?
     /// Set to open the remote-session picker for a host.
@@ -398,6 +405,7 @@ final class Workspace: ObservableObject {
         let all = SSHConfigReader.aliases().filter { !saved.contains($0) }
         sshConfigAliases = all.filter { !hidden.contains($0) }
         hiddenSSHConfigAliases = all.filter { hidden.contains($0) }
+        shownGitAliases = hostStore.shownAliases()
         resolveSSHDestinations(all + hosts.map(\.host))
     }
 
@@ -454,13 +462,50 @@ final class Workspace: ObservableObject {
     /// Everything else you can log in to, folded away under 其他服务器.
     var otherServers: [ServerItem] {
         let shown = Set(sidebarServers.map(\.id))
-        return hosts.filter { !shown.contains($0.id) }.map(ServerItem.host)
-            + sshConfigAliases.filter { !isGitHosting(alias: $0) }.map(ServerItem.alias)
+        return hosts.filter { !shown.contains($0.id) && $0.visibility != .hidden }.map(ServerItem.host)
+            + sshConfigAliases.filter { !isAutoHidden(alias: $0) }.map(ServerItem.alias)
     }
 
-    /// ~/.ssh/config entries for git (github.com…), left out of the sidebar.
+    /// ~/.ssh/config entries for git (github.com…), left out of the sidebar
+    /// unless you chose to show them.
     var gitHostingAliases: [String] {
-        sshConfigAliases.filter { isGitHosting(alias: $0) }
+        sshConfigAliases.filter { isAutoHidden(alias: $0) }
+    }
+
+    private func isAutoHidden(alias: String) -> Bool {
+        isGitHosting(alias: alias) && !shownGitAliases.contains(alias)
+    }
+
+    /// Where an unsaved ~/.ssh/config alias shows: 自动 (under 其他服务器) or
+    /// 隐藏 (removed by you, or git hosting you haven't asked to show).
+    func visibility(ofAlias alias: String) -> RemoteHost.SidebarVisibility {
+        hiddenSSHConfigAliases.contains(alias) || isAutoHidden(alias: alias) ? .hidden : .auto
+    }
+
+    func setVisibility(_ visibility: RemoteHost.SidebarVisibility, of host: RemoteHost) {
+        var h = host
+        h.sidebar = visibility
+        saveHost(h)
+    }
+
+    /// 固定 saves the alias as a server (returned); 自动 / 隐藏 are only
+    /// remembered here. ~/.ssh/config itself is never touched.
+    @discardableResult
+    func setVisibility(_ visibility: RemoteHost.SidebarVisibility, ofAlias alias: String) -> RemoteHost? {
+        if visibility == .pinned { return pin(alias: alias) }
+        var hidden = hostStore.hiddenAliases()
+        var shown = hostStore.shownAliases()
+        if visibility == .hidden {
+            hidden.insert(alias)
+            shown.remove(alias)
+        } else {
+            hidden.remove(alias)
+            if isGitHosting(alias: alias) { shown.insert(alias) }
+        }
+        hostStore.saveHiddenAliases(hidden)
+        hostStore.saveShownAliases(shown)
+        reloadSSHConfig()
+        return nil
     }
 
     func isGitHosting(alias: String) -> Bool {
@@ -479,16 +524,35 @@ final class Workspace: ObservableObject {
     }
 
     func setPinned(_ host: RemoteHost, _ pinned: Bool) {
-        var h = host
-        h.sidebar = pinned ? .pinned : .auto
-        saveHost(h)
+        setVisibility(pinned ? .pinned : .auto, of: host)
     }
 
     /// Pinning an ~/.ssh/config alias saves it as a server (the config file is untouched).
-    func pin(alias: String) {
+    @discardableResult
+    func pin(alias: String) -> RemoteHost {
         var h = RemoteHost.fromSSHConfig(alias: alias)
         h.sidebar = .pinned
         saveHost(h)
+        return h
+    }
+
+    /// 测试连接 in 管理服务器: one ssh round trip, timed. A saved server's
+    /// session list is kept for the sidebar and ⌘P too.
+    func testConnection(_ host: RemoteHost) async -> Result<(info: SSH.ServerInfo, seconds: Double), SSH.ProbeError> {
+        let start = Date()
+        let result = await SSH.inspect(host)
+        let seconds = Date().timeIntervalSince(start)
+        if case .success(let info) = result, hosts.contains(where: { $0.id == host.id }) {
+            remoteListings[host.id] = .sessions(info.sessions, multiplexer: info.multiplexer(for: host.persistence),
+                                                at: Date())
+        }
+        return result.map { (info: $0, seconds: seconds) }
+    }
+
+    /// What the host editor's 保存 does, from wherever it was opened.
+    func saveEdited(_ host: RemoteHost, password: String?) {
+        if let password { HostKeychain.setPassword(password, for: host.id, label: host.name) }
+        saveHost(host)
     }
 
     /// Look up the server's tmux / zellij sessions (one ssh, no terminal),
@@ -512,21 +576,6 @@ final class Workspace: ObservableObject {
                 remoteListings[host.id] = .failed(e.message.isEmpty ? "连接失败" : e.message)
             }
         }
-    }
-
-    /// Remove an ~/.ssh/config alias from Waitlight's list. Only remembered
-    /// here; ~/.ssh/config itself is never touched.
-    func hideSSHConfigAlias(_ alias: String) {
-        var hidden = hostStore.hiddenAliases()
-        hidden.insert(alias)
-        hostStore.saveHiddenAliases(hidden)
-        reloadSSHConfig()
-    }
-
-    /// Show every hidden ~/.ssh/config alias again.
-    func unhideSSHConfigAliases() {
-        hostStore.saveHiddenAliases([])
-        reloadSSHConfig()
     }
 
     func saveHost(_ host: RemoteHost) {
@@ -593,25 +642,35 @@ final class Workspace: ObservableObject {
         let session = makeRemoteSession(host, sessionName: sessionName)
         add(session, select: true)
         persist()
+        noteConnected(host)
         return session
+    }
+
+    /// For 上次连接 in 管理服务器. Written straight to hosts.json: a full
+    /// saveHost would re-read ~/.ssh/config on every connect.
+    private func noteConnected(_ host: RemoteHost) {
+        guard let i = hosts.firstIndex(where: { $0.id == host.id }) else { return }
+        hosts[i].lastConnected = Date()
+        hostStore.save(hosts)
     }
 
     /// Connecting an ~/.ssh/config alias saves it as a server, so the session
     /// can be reconnected and restored later.
     @discardableResult
-    func connect(alias: String) -> AgentSession {
+    func connect(alias: String, sessionName: String? = nil) -> AgentSession {
         let host = hosts.first { $0.host == alias } ?? {
             let h = RemoteHost.fromSSHConfig(alias: alias)
             saveHost(h)
             return h
         }()
-        return connect(host)
+        return connect(host, sessionName: sessionName)
     }
 
     /// Reconnect with the host's *current* settings (they may have been edited).
     func reconnect(_ session: AgentSession) {
         guard let host = host(for: session) else { return }
         session.reconnect(with: SSH.commandLine(for: host, sessionName: session.remote?.sessionName))
+        noteConnected(host)
     }
 
     // MARK: Events bubbled up from sessions

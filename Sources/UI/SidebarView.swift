@@ -63,6 +63,11 @@ struct SidebarView: View {
                     Text("其他服务器")
                     Text("\(workspace.otherServers.count)").foregroundStyle(.tertiary)
                     Spacer()
+                    Button { workspace.managingServers = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("管理服务器：固定、自动或隐藏每台服务器")
                     Button { workspace.editingHost = RemoteHost.new() } label: {
                         Image(systemName: "plus")
                     }
@@ -391,9 +396,7 @@ struct NewSessionMenu: View {
                 }
                 Divider()
                 Button("添加服务器…") { workspace.editingHost = RemoteHost.new() }
-                if !workspace.hiddenSSHConfigAliases.isEmpty {
-                    Button("恢复已删除的 ssh config 条目") { workspace.unhideSSHConfigAliases() }
-                }
+                Button("管理服务器…") { workspace.managingServers = true }
             } label: {
                 Label("连接服务器", systemImage: "server.rack")
             }
@@ -488,6 +491,7 @@ private struct ServerHeader: View {
             } else {
                 Button("固定到侧边栏") { workspace.setPinned(host, true) }
             }
+            Button("管理服务器…") { workspace.managingServers = true }
         }
     }
 
@@ -603,18 +607,17 @@ private struct OtherServers: View {
             switch item {
             case .host(let host):
                 Button("固定到侧边栏") { workspace.setPinned(host, true) }
+                Button("隐藏（只在 ⌘P 和管理服务器里显示）") { workspace.setVisibility(.hidden, of: host) }
                 Button("编辑…") { workspace.editingHost = host }
                 Divider()
                 Button("删除", role: .destructive) { confirmDelete(host) }
             case .alias(let alias):
                 Button("固定到侧边栏") { workspace.pin(alias: alias) }
+                Button("隐藏（只在 ⌘P 和管理服务器里显示）") { workspace.setVisibility(.hidden, ofAlias: alias) }
                 Button("保存为服务器…") { workspace.editingHost = .fromSSHConfig(alias: alias) }
-                Divider()
-                Button("从列表中删除", role: .destructive) { confirmHide(alias) }
             }
-            if !workspace.hiddenSSHConfigAliases.isEmpty {
-                Button(restoreHiddenTitle) { workspace.unhideSSHConfigAliases() }
-            }
+            Divider()
+            Button("管理服务器…") { workspace.managingServers = true }
         }
     }
 
@@ -628,19 +631,6 @@ private struct OtherServers: View {
         case .host(let host): workspace.connect(host)
         case .alias(let alias): workspace.connect(alias: alias)
         }
-    }
-
-    private var restoreHiddenTitle: String {
-        "恢复已删除的 ssh config 条目（\(workspace.hiddenSSHConfigAliases.count)）"
-    }
-
-    private func confirmHide(_ alias: String) {
-        let alert = NSAlert()
-        alert.messageText = "从列表中删除“\(alias)”？"
-        alert.informativeText = "只是不在 Waitlight 里显示，~/.ssh/config 不会被修改，ssh 命令照常可用。之后可在右键菜单里恢复。"
-        alert.addButton(withTitle: "删除")
-        alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn { workspace.hideSSHConfigAlias(alias) }
     }
 
     private func confirmDelete(_ host: RemoteHost) {

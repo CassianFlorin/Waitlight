@@ -121,15 +121,19 @@ enum QuickOpen {
                 actions.append(Action(id: "pick", label: "附加…") { workspace.pickingSessionFor = host })
             }
             var subtitle = workspace.address(of: host)
-            if !inSidebar.contains(host.id) { subtitle += " · 在“其他服务器”里" }
+            if !inSidebar.contains(host.id) {
+                subtitle += host.visibility == .hidden ? " · 已隐藏" : " · 在“其他服务器”里"
+            }
             add(.servers, id: "host:\(host.id)", symbol: host.symbol, title: host.name, subtitle: subtitle,
                 searchable: [host.host], actions: actions)
         }
         if !q.isEmpty {
-            for alias in workspace.sshConfigAliases {
+            // Hidden ones too: ⌘P is where they can still be found.
+            for alias in workspace.sshConfigAliases + workspace.hiddenSSHConfigAliases {
                 let git = workspace.isGitHosting(alias: alias)
+                let note = git ? " · git 托管" : workspace.visibility(ofAlias: alias) == .hidden ? " · 已隐藏" : " · ~/.ssh/config"
                 add(.servers, id: "alias:\(alias)", symbol: "server.rack", title: alias,
-                    subtitle: workspace.address(ofAlias: alias) + (git ? " · git 托管" : " · ~/.ssh/config"),
+                    subtitle: workspace.address(ofAlias: alias) + note,
                     actions: [Action(id: "new", label: "新会话") { workspace.connect(alias: alias) }])
             }
         }
@@ -167,6 +171,9 @@ enum QuickOpen {
             actions: [Action(id: "go", label: "打开") { workspace.showingDashboard = true }])
         add(.commands, id: "cmd:resume", symbol: "clock.arrow.circlepath", title: "恢复之前的对话…", subtitle: "⇧⌘O",
             searchable: ["resume"], actions: [Action(id: "go", label: "打开") { workspace.showResume() }])
+        add(.commands, id: "cmd:servers", symbol: "server.rack", title: "管理服务器…", subtitle: "",
+            searchable: ["servers", "ssh", "hosts", "服务器"],
+            actions: [Action(id: "go", label: "打开") { workspace.managingServers = true }])
         add(.commands, id: "cmd:agents", symbol: "gearshape", title: "管理 Agent…", subtitle: "",
             searchable: ["agents", "settings"], actions: [Action(id: "go", label: "打开") { workspace.managingAgents = true }])
 

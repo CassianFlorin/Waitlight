@@ -164,6 +164,7 @@ struct AppCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!menu.selectedDisconnected)
             Button("添加服务器…") { workspace.editingHost = RemoteHost.new() }
+            Button("管理服务器…") { workspace.managingServers = true }
             Divider()
             Button("重命名会话…") { workspace.renaming = workspace.selected }
                 .disabled(!hasSession)

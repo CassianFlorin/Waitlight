@@ -162,6 +162,9 @@ enum SSH {
         var hasTmux: Bool
         var hasZellij: Bool
         var sessions: [String]
+        /// "tmux 3.3a", "zellij 0.40.1" when the server says.
+        var tmuxVersion: String?
+        var zellijVersion: String?
 
         /// Which multiplexer a host with this setting ends up using here.
         func multiplexer(for p: RemoteHost.Persistence) -> String? {
@@ -178,8 +181,9 @@ enum SSH {
     static func inspect(_ host: RemoteHost) async -> Result<ServerInfo, ProbeError> {
         let script = """
         echo "@sys $(uname -sr 2>/dev/null)"; \
-        command -v tmux >/dev/null 2>&1 && echo "@tmux" && tmux ls -F '@t #S' 2>/dev/null; \
-        command -v zellij >/dev/null 2>&1 && echo "@zellij" && zellij ls -n -s 2>/dev/null | sed 's/^/@z /'; \
+        echo "@os $(sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"')"; \
+        command -v tmux >/dev/null 2>&1 && echo "@tmux $(tmux -V 2>/dev/null)" && tmux ls -F '@t #S' 2>/dev/null; \
+        command -v zellij >/dev/null 2>&1 && echo "@zellij $(zellij --version 2>/dev/null)" && zellij ls -n -s 2>/dev/null | sed 's/^/@z /'; \
         true
         """
         let r = await run(host, command: script)
@@ -190,13 +194,21 @@ enum SSH {
         }
         var info = ServerInfo(system: "", hasTmux: false, hasZellij: false, sessions: [])
         var tmuxSessions: [String] = [], zellijSessions: [String] = []
+        var osName = ""
+        func rest(_ line: String, _ tag: String) -> String? {
+            let v = line.dropFirst(tag.count).trimmingCharacters(in: .whitespaces)
+            return v.isEmpty ? nil : v
+        }
         for line in r.output.components(separatedBy: .newlines) {
             if line.hasPrefix("@sys ") { info.system = String(line.dropFirst(5)) }
-            else if line == "@tmux" { info.hasTmux = true }
-            else if line == "@zellij" { info.hasZellij = true }
+            else if line.hasPrefix("@os") { osName = rest(line, "@os") ?? "" }
+            else if line.hasPrefix("@tmux") { info.hasTmux = true; info.tmuxVersion = rest(line, "@tmux") }
+            else if line.hasPrefix("@zellij") { info.hasZellij = true; info.zellijVersion = rest(line, "@zellij") }
             else if line.hasPrefix("@t ") { tmuxSessions.append(String(line.dropFirst(3))) }
             else if line.hasPrefix("@z ") { zellijSessions.append(String(line.dropFirst(3))) }
         }
+        // "Ubuntu 22.04.4 LTS" reads better than "Linux 5.15.0-…".
+        if !osName.isEmpty { info.system = osName }
         // Sessions of the multiplexer this host will actually use.
         switch host.persistence {
         case .tmux: info.sessions = tmuxSessions

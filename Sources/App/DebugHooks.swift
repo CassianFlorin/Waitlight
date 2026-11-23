@@ -252,6 +252,27 @@ enum DebugHooks {
             }
         case "agent":
             if let s = workspace.selected, let kind = workspace.catalog.agent(id: arg) { workspace.addAgent(kind, to: s) }
+        case "servers":
+            // servers:open | servers:close | servers:list | servers:vis:<name>:<pinned|auto|hidden>
+            // | servers:select:<name> | servers:test | servers:filter:<f> | servers:query:<q>
+            let parts = arg.split(separator: ":", maxSplits: 2).map(String.init)
+            switch parts.first {
+            case "open": workspace.managingServers = true
+            case "close": workspace.managingServers = false
+            case "list":
+                for h in workspace.hosts {
+                    log("host \(h.name) vis=\(h.visibility) last=\(h.lastConnected.map { "\($0)" } ?? "-")")
+                }
+                for a in workspace.sshConfigAliases + workspace.hiddenSSHConfigAliases {
+                    log("alias \(a) vis=\(workspace.visibility(ofAlias: a)) git=\(workspace.isGitHosting(alias: a))")
+                }
+            case "vis" where parts.count == 3:
+                guard let v = RemoteHost.SidebarVisibility(rawValue: parts[2]) else { break }
+                if let h = workspace.hosts.first(where: { $0.name == parts[1] }) { workspace.setVisibility(v, of: h) }
+                else { workspace.setVisibility(v, ofAlias: parts[1]) }
+            default:
+                workspace.debugServerCommand = arg
+            }
         case "hosts":
             for h in workspace.hosts { log("host \(h.name) | \(SSH.commandLine(for: h, sessionName: "agentdeck"))") }
             log("aliases \(workspace.sshConfigAliases.count)")
