@@ -255,11 +255,15 @@ final class AgentSession: ObservableObject, Identifiable {
     private var gitRefresh: Task<Void, Never>?
     private var gitRefreshAgain = false
 
+    /// For a worktree on a server: how to look at it (one ssh), set by the workspace.
+    var remoteSnapshot: ((WorktreeRef) async -> GitSnapshot?)?
+    private var remoteGitAt: Date?
+
     /// Look at the folder's branch and changes again, off the main thread.
     /// Runs at moments things likely changed (a turn ended, a command
     /// finished, the folder changed, you came back to Waitlight), never on a timer.
     func refreshGit() {
-        guard remote == nil else { return }
+        if remote != nil { return refreshRemoteGit() }
         guard gitRefresh == nil else { gitRefreshAgain = true; return }
         let dir = directory
         // Count from the branch point only while inside the task's worktree.
@@ -273,6 +277,20 @@ final class AgentSession: ObservableObject, Identifiable {
                 self.gitRefreshAgain = false
                 self.refreshGit()
             }
+        }
+    }
+
+    /// A server worktree, over ssh: at most every 30 s, since there are no
+    /// turn ends to go by and you coming back to Waitlight is frequent.
+    private func refreshRemoteGit() {
+        guard let wt = worktree, wt.hostID != nil, let fetch = remoteSnapshot, gitRefresh == nil else { return }
+        if let at = remoteGitAt, Date().timeIntervalSince(at) < 30 { return }
+        remoteGitAt = Date()
+        gitRefresh = Task { [weak self] in
+            let snap = await fetch(wt)
+            guard let self else { return }
+            if let snap, self.git != snap { self.git = snap }
+            self.gitRefresh = nil
         }
     }
 
@@ -315,6 +333,8 @@ final class AgentSession: ObservableObject, Identifiable {
 
         case .attention(let message):
             setActivity(.waiting(message), in: pane)
+            // A bell from a server task: likely its agent finished or asks something.
+            if remote != nil { refreshGit() }
             if isFrontmost() && NSApp.isActive && pane === focusedPane { return }
             status = .needsAttention(message)
             NSApp.requestUserAttention(.informationalRequest)

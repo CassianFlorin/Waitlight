@@ -10,6 +10,8 @@ struct WorktreeRef: Codable, Equatable {
     var branch: String
     /// What the branch started from; changes are counted against it.
     var base: String
+    /// The server it is on (see `RemoteGit`); nil on this Mac.
+    var hostID: UUID?
 }
 
 /// A folder's branch and what changed in it, at a glance.

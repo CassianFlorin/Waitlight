@@ -39,22 +39,45 @@ enum SSH {
         return a
     }
 
-    /// The command run on the server for an interactive session.
-    static func remoteCommand(for host: RemoteHost, sessionName: String?) -> String? {
-        let cd = host.remoteDirectory.flatMap { $0.isEmpty ? nil : "cd \(quote($0)) 2>/dev/null; " } ?? ""
+    /// The command run on the server for an interactive session, in
+    /// `directory` (else the host's folder). With `startLine`, a new session
+    /// starts by running it, as if typed: a task's agent. Only tmux can be
+    /// handed one; elsewhere the line runs in a plain shell that won't
+    /// survive a disconnect.
+    static func remoteCommand(for host: RemoteHost, sessionName: String?,
+                              directory: String? = nil, startLine: String? = nil) -> String? {
+        let dir = directory ?? host.remoteDirectory
+        let cd = dir.flatMap { $0.isEmpty ? nil : "cd \(RemoteGit.shellPath($0)) 2>/dev/null; " } ?? ""
+        let name = quote(sessionName ?? "agentdeck")
+        if let startLine {
+            // A login, interactive shell: the agent is on the PATH it is on when you type it.
+            let plain = "\"$SHELL\" -lic \(quote(startLine)); exec \"$SHELL\" -l"
+            let note = "echo '[Waitlight] 服务器上没有 tmux，这个任务断线后无法恢复。'; "
+            switch host.persistence {
+            case .tmux, .auto:
+                // Typed into the session's own shell, so its rc files are read first.
+                let target = quote("=" + (sessionName ?? "agentdeck") + ":")
+                let start = "tmux has-session -t \(quote("=" + (sessionName ?? "agentdeck"))) 2>/dev/null || "
+                    + "{ tmux new-session -d -s \(name) && tmux send-keys -t \(target) -l \(quote(startLine)) "
+                    + "&& tmux send-keys -t \(target) Enter; }; "
+                return cd + "if command -v tmux >/dev/null 2>&1; then \(start)exec \(tmuxAttach(name)); "
+                    + "else \(note)\(plain); fi"
+            case .zellij:
+                return cd + "echo '[Waitlight] zellij 不能代为开始任务，这个任务用普通 shell，断线后无法恢复。'; " + plain
+            case .none:
+                return cd + plain
+            }
+        }
         switch host.persistence {
         case .tmux:
-            let name = quote(sessionName ?? "agentdeck")
             // Fall back to a plain shell if tmux isn't installed, and say so.
             return cd + "if command -v tmux >/dev/null 2>&1; then exec \(tmuxAttach(name)); "
                 + "else echo '[Waitlight] 服务器上没有 tmux，断线后无法恢复。'; exec \"$SHELL\" -l; fi"
         case .zellij:
-            let name = quote(sessionName ?? "agentdeck")
             return cd + "if command -v zellij >/dev/null 2>&1; then exec zellij attach -c \(name); "
                 + "else echo '[Waitlight] 服务器上没有 zellij，断线后无法恢复。'; exec \"$SHELL\" -l; fi"
         case .auto:
             // Whatever the server has; silently a plain shell if neither.
-            let name = quote(sessionName ?? "agentdeck")
             return cd + "if command -v tmux >/dev/null 2>&1; then exec \(tmuxAttach(name)); "
                 + "elif command -v zellij >/dev/null 2>&1; then exec zellij attach -c \(name); "
                 + "else exec \"$SHELL\" -l; fi"
@@ -72,8 +95,10 @@ enum SSH {
     }
 
     /// The full line typed into the local shell to connect.
-    static func commandLine(for host: RemoteHost, sessionName: String?) -> String {
-        commandLine(for: host, remoteCommand: remoteCommand(for: host, sessionName: sessionName))
+    static func commandLine(for host: RemoteHost, sessionName: String?,
+                            directory: String? = nil, startLine: String? = nil) -> String {
+        commandLine(for: host, remoteCommand: remoteCommand(for: host, sessionName: sessionName,
+                                                             directory: directory, startLine: startLine))
     }
 
     /// Same, running `remoteCommand` (nil = the login shell) on the server.
@@ -85,10 +110,20 @@ enum SSH {
         }
         // `command` skips shell-integration's ssh wrapper (ghostty +ssh), so the
         // host's own TERM setting is what the server sees.
+        #if DEBUG
+        if isFaked { return "sh -c " + quote(remoteCommand ?? "exec \"$SHELL\" -l") }
+        #endif
         var parts = env + ["command", "ssh"] + options(for: host, interactive: true).map(quote) + [quote(host.host)]
         if let remoteCommand { parts.append(quote(remoteCommand)) }
         return parts.joined(separator: " ")
     }
+
+    #if DEBUG
+    /// Test instances only (WAITLIGHT_FAKE_SSH=1): every server is this Mac,
+    /// its commands run in a local sh, so server features can be tried
+    /// without a server. Never set for the instance you use.
+    static let isFaked = ProcessInfo.processInfo.environment["WAITLIGHT_FAKE_SSH"] == "1"
+    #endif
 
     // MARK: Background probes
 
@@ -138,6 +173,13 @@ enum SSH {
     /// SSH_ASKPASS, everything else runs in BatchMode.
     static func backgroundProcess(_ host: RemoteHost, command: String, verbose: Bool = false) -> Process {
         let p = Process()
+        #if DEBUG
+        if isFaked {
+            p.executableURL = URL(fileURLWithPath: "/bin/sh")
+            p.arguments = ["-c", command]
+            return p
+        }
+        #endif
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         var args = options(for: host, interactive: false)
         args += ["-o", "ConnectTimeout=8"]
