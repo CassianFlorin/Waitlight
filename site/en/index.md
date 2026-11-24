@@ -2,8 +2,6 @@
 
 Waitlight is a native macOS app for running multiple AI coding agents (Claude Code, Codex, Gemini and more) side by side, locally or over SSH, with one sidebar that shows which agent needs you. Built on Ghostty. Free and open source.
 
-A native macOS workbench for coding agents
-
 # One window for every agent.
 
 **See who is working and who is waiting on you.** Coding agents, local folders, and SSH sessions, all in one window.
@@ -57,6 +55,8 @@ Every agent carries a status light. Four colors, four meanings.
 - **Quick keys**: when it asks you to choose, `1 2 3 ↩ esc` next to the reply field answer its prompt.
 - **In and out**: `↩` or a double-click opens its session with the cursor in its pane. `esc`, or any session in the sidebar, returns to the terminal.
 
+## This Mac, your servers, last week's conversation: all at hand.
+
 ## Local and remote, in the same sidebar.
 
 The sidebar is grouped by machine: one section for this Mac, one for each server with sessions open. Hosts from ~/.ssh/config work as they are, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was.
@@ -78,11 +78,31 @@ Relaunch the app, or start an agent that had exited, and Claude Code, Grok, and 
 - Custom agents: Waitlight generates an id and returns to the same conversation only when both the new-conversation and the resume arguments contain {id}. With only the continue-latest arguments filled in, relaunching the app continues the most recent conversation. With neither, every start is a new conversation.
 - Sessions opened from a Docker container are not restored on the next launch. With nothing to restore, Waitlight opens a shell in your home directory.
 
-### Every pane is a real Ghostty terminal
-
-~/.config/ghostty/config
+## Every pane is a real Ghostty terminal
 
 Fonts, themes, and keybinds come straight from your Ghostty config. Changes made in Waitlight's settings are layered on top and never written back to the file. Text a theme makes too dim, such as zsh suggestions, is brightened so it stays readable.
+
+## Native, light, and focused on one thing: which agent needs you.
+
+### A native macOS app
+
+Written in Swift, with Ghostty's own core, libghostty, drawing every terminal through Metal. Not a web page in a wrapper.
+
+### Nothing to install on servers
+
+Just SSH, plus tmux or zellij if the machine has them. Safe for production boxes and NAS alike.
+
+### The keyboard is enough
+
+Jumping to the next agent that needs you, the overview, finding a session: all on keys.
+
+### Free and open source
+
+MIT licensed, with all the code on GitHub. No account to sign up for.
+
+### Your agents, your subscriptions
+
+Waitlight never proxies or relays a request: each agent is the one you installed and signed in to yourself.
 
 ## Keep your hands on the keyboard.
 
