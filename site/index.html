@@ -2572,13 +2572,14 @@ Parts of Sources/Ghostty/ are adapted from Ghostty&#x27;s macOS app under that l
       if (list && stage) {
         var MS = 7000, auto = !reduce, cycle = null, inView = true, hovering = false, t;
         list.style.setProperty("--scene-ms", MS + "ms");
+        // The progress line runs only while the next switch is really scheduled
+        // (or, under the pointer, waiting to be): never while nothing will happen.
         function restart() {
           clearTimeout(cycle);
-          if (!auto || !t) return;
-          // Start the progress bar over, on the tab now selected.
-          cls(list, "auto", false); void list.offsetWidth; cls(list, "auto", true);
-          if (!inView || hovering) return;
-          cycle = setTimeout(next, MS);
+          cls(list, "auto", false);
+          if (!auto || !t || !inView) return;
+          void list.offsetWidth; cls(list, "auto", true);
+          if (!hovering) cycle = setTimeout(next, MS);
         }
         function next() {
           var i = t.tabs.findIndex(function (x) { return x.getAttribute("aria-selected") === "true"; });
@@ -2606,13 +2607,22 @@ Parts of Sources/Ghostty/ are adapted from Ghostty&#x27;s macOS app under that l
           if (e.pointerType !== "mouse") return;
           hovering = false; cls(list, "paused", false); if (auto) restart();
         });
+        // Rotate while you can see the tab row (where the progress line is) or
+        // any of the stage. On a laptop the first screen often shows only the
+        // tabs and the top edge of the window, and that has to count.
         if ("IntersectionObserver" in window) {
-          new IntersectionObserver(function (entries) {
-            inView = entries[0].isIntersecting;
-            if (inView) restart(); else clearTimeout(cycle);
-          }, { threshold: 0.3 }).observe(stage);
+          var seen = new Map();
+          var watch = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) { seen.set(e.target, e.isIntersecting); });
+            inView = !!(seen.get(list) || seen.get(stage));
+            restart();
+          });
+          watch.observe(list);
+          watch.observe(stage);
         }
-        document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(cycle); else restart(); });
+        document.addEventListener("visibilitychange", function () {
+          if (document.hidden) { clearTimeout(cycle); cls(list, "auto", false); } else restart();
+        });
       }
 
       var ft = $(".ftabs");
