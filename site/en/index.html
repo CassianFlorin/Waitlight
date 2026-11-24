@@ -253,11 +253,12 @@
       inset: 0;
       pointer-events: none;
       background:
-        radial-gradient(760px 420px at 12% 0%, rgba(62, 236, 200, 0.1), transparent 62%),
+        radial-gradient(900px 480px at 50% -6%, rgba(62, 236, 200, 0.13), transparent 64%),
+        radial-gradient(700px 400px at 50% 62%, rgba(106, 171, 255, 0.07), transparent 70%),
         linear-gradient(rgba(232, 238, 248, 0.035) 1px, transparent 1px),
         linear-gradient(90deg, rgba(232, 238, 248, 0.035) 1px, transparent 1px);
-      background-size: auto, 72px 72px, 72px 72px;
-      mask-image: linear-gradient(#000 30%, transparent 92%);
+      background-size: auto, auto, 72px 72px, 72px 72px;
+      mask-image: linear-gradient(#000 40%, transparent 96%);
     }
     .hero {
       position: relative;
@@ -754,6 +755,203 @@
     .js .reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.5s ease, transform 0.5s ease; }
     .js .reveal.in { opacity: 1; transform: none; }
 
+
+    /* ---- Centered hero, Orca-style: headline, then a wide stage with scene tabs ---- */
+    .hero { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 0; padding: 76px 0 40px; }
+    .hero .copy { display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 920px; }
+    .hero h1 { margin-top: 22px; font-size: clamp(42px, 6.2vw, 92px); line-height: 1.04; letter-spacing: -0.04em; }
+    .hero .lead { margin-left: auto; margin-right: auto; max-width: 34em; }
+    .hero .actions { justify-content: center; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 5px 12px 5px 5px; border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.04);
+      color: var(--text); font-size: 13px; line-height: 1.4; text-decoration: none;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .pill:hover { border-color: rgba(62, 236, 200, 0.45); background: rgba(62, 236, 200, 0.07); color: var(--ink); }
+    .pill .new { padding: 2px 9px; border-radius: 999px; background: rgba(62, 236, 200, 0.14); color: var(--mint); font-size: 12px; font-weight: 600; }
+    .pill svg { width: 12px; height: 12px; color: var(--muted); transition: transform 0.2s ease; }
+    .pill:hover svg { transform: translateX(2px); }
+
+    .scenes {
+      position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+      margin: 56px auto 18px; padding: 5px; border-radius: 14px;
+      border: 1px solid var(--line); background: rgba(255, 255, 255, 0.025);
+    }
+    html:not(.js) .scenes { display: none; }
+    .scene-tab {
+      position: relative; overflow: hidden; flex: none;
+      display: inline-flex; align-items: center; gap: 8px;
+      min-height: 36px; padding: 0 14px; border-radius: 10px;
+      color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap;
+      transition: color 0.2s ease, background 0.2s ease;
+    }
+    .scene-tab svg { width: 15px; height: 15px; flex: none; }
+    .scene-tab:hover { color: var(--ink); background: rgba(255, 255, 255, 0.05); }
+    .scene-tab[aria-selected="true"] { color: var(--ink); background: rgba(255, 255, 255, 0.09); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+    .scene-tab[aria-selected="true"] svg { color: var(--mint); }
+    .scene-tab .prog { position: absolute; left: 10px; right: 10px; bottom: 3px; height: 2px; border-radius: 2px; background: var(--mint); transform: scaleX(0); transform-origin: left; opacity: 0; }
+    .scenes.auto .scene-tab[aria-selected="true"] .prog { opacity: 0.8; animation: prog var(--scene-ms, 7s) linear forwards; }
+    .scenes.auto.paused .scene-tab[aria-selected="true"] .prog { animation-play-state: paused; }
+    @keyframes prog { to { transform: scaleX(1); } }
+
+    .hero .stage { position: relative; display: grid; width: min(1180px, 100%); margin: 0 auto; }
+    .hero .stage::before {
+      content: ""; position: absolute; inset: 8% 6% -4%; z-index: -1; pointer-events: none;
+      background: radial-gradient(closest-side, rgba(62, 236, 200, 0.16), transparent); filter: blur(40px);
+    }
+    .scene { grid-area: 1 / 1; min-width: 0; transition: opacity 0.45s ease, transform 0.45s ease, filter 0.45s ease; }
+    .js .scene:not(.on) { opacity: 0; transform: translateY(10px) scale(0.985); filter: blur(4px); visibility: hidden; pointer-events: none; }
+    .js .scene:not(.on) * { animation-play-state: paused !important; }
+    html:not(.js) .scene:not(#scene-watch) { display: none; }
+    .scene .caption { text-align: center; max-width: 52em; margin-left: auto; margin-right: auto; }
+    .scene { display: flex; flex-direction: column; }
+    .scene > .window { flex: 1; display: flex; flex-direction: column; }
+    .scene > .window > .workspace { flex: 1; }
+
+    /* Demo windows: a session row can carry its branch line. */
+    .demo .session { cursor: default; }
+    .gitl { grid-column: 2; grid-row: 3; display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 2px; font-size: 11px; color: var(--muted); }
+    .gitl .br { width: 11px; height: 11px; color: #4fd1c5; flex: none; }
+    .gitl code { font-family: var(--mono); font-size: 10.5px; color: #b9c4d6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dbar { margin: 12px 14px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); font-size: 12px; }
+    .dline { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; white-space: nowrap; overflow: hidden; }
+    .dline .chip { display: inline-flex; align-items: center; gap: 5px; }
+    .dline .chip .kind { width: 11px; height: 11px; color: #e8a87c; }
+    .dtype { position: relative; flex: 1; min-width: 0; color: var(--ink); font-size: 13px; }
+    .dtype .ph, .pq .ph { position: absolute; left: 12px; color: var(--muted); white-space: nowrap; }
+    .typed:not(:empty) ~ .ph { display: none; }
+    .wt-row { border-top: 1px solid var(--line); min-height: 34px; color: var(--text); font-size: 11.5px; }
+    .wt-row code { font-family: var(--mono); color: var(--ink); }
+    .wt-row .dim { overflow: hidden; text-overflow: ellipsis; }
+    .tgl { width: 24px; height: 14px; border-radius: 99px; background: var(--mint); position: relative; flex: none; }
+    .tgl i { position: absolute; right: 2px; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: white; }
+    .dnote { padding: 0 10px 8px; color: var(--muted); font-size: 11.5px; opacity: 0; transition: opacity 0.4s ease; }
+    .dnote.show { opacity: 1; }
+    .dlist { padding: 2px 8px 10px; }
+    .dlist .dash-row { cursor: default; }
+    .demo .new-task { display: none; }
+    .demo .new-task.show { display: grid; animation: arrive 1.2s ease; }
+    .dlist .dash-row.new-task.show { animation: arrive 1.2s ease; }
+    .tmux-list { margin: 2px 6px 4px 30px; font-size: 11px; color: var(--muted); }
+    .tmux-list div { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; }
+    .tmux-list code { font-family: var(--mono); color: var(--text); }
+    .tmux-list .redo { padding: 0 7px; }
+    .side-label.others { margin-top: 14px; opacity: 0.7; }
+    .s-gpu .s-on, .s-gpu.back .s-off { display: none; }
+    .s-gpu.back .s-on { display: inline; }
+    .s-dot { background: var(--amber); transition: background 0.3s ease; }
+    .s-dot.back { background: var(--green); }
+    .s-gpu.back { animation: arrive 1.2s ease; border-radius: 8px; }
+    .cores.live i { animation: core 2.4s ease-in-out infinite alternate; transform-origin: bottom; }
+    .cores.live i:nth-child(2) { animation-delay: -0.6s; } .cores.live i:nth-child(3) { animation-delay: -1.2s; } .cores.live i:nth-child(4) { animation-delay: -1.8s; }
+    @keyframes core { from { transform: scaleY(0.55); } to { transform: scaleY(1); } }
+    .bar .wob { animation: wob 3s ease-in-out infinite alternate; }
+    @keyframes wob { from { width: 48%; } to { width: 72%; } }
+
+    /* ⌘P palette over a dimmed window */
+    #scene-jump .window { position: relative; }
+    .main.dimmed { opacity: 0.35; }
+    .palette {
+      position: absolute; left: 50%; top: 58px; transform: translateX(-50%);
+      width: min(560px, calc(100% - 32px)); border-radius: 12px; overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(16, 26, 44, 0.97);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      font-size: 12.5px;
+    }
+    .pq { position: relative; display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 14px; }
+    .pq svg { width: 15px; height: 15px; color: var(--muted); flex: none; }
+    .pq .ph { left: 49px; }
+    .pq kbd { margin-left: auto; font-size: 10.5px; }
+    .pres { padding: 4px 6px 6px; min-height: 236px; }
+    .pg { margin: 8px 8px 3px; font-size: 10.5px; color: var(--muted); opacity: 0; transition: opacity 0.3s ease; }
+    .pr { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; opacity: 0; transform: translateY(4px); transition: opacity 0.3s ease, transform 0.3s ease, background 0.2s ease; }
+    .pres.show .pg, .pres.show .pr { opacity: 1; transform: none; }
+    .pr .kind { width: 13px; height: 13px; color: var(--grey); flex: none; }
+    .pr .pt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pr .pt b { color: var(--ink); font-weight: 500; }
+    .pr.sel { background: rgba(255, 255, 255, 0.09); }
+    .acts { display: flex; gap: 4px; flex: none; }
+    .acts i { font-style: normal; padding: 1px 7px; border-radius: 5px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; transition: all 0.2s ease; }
+    .pr.sel .acts i.hot { border-color: rgba(62, 236, 200, 0.6); color: var(--mint); background: rgba(62, 236, 200, 0.1); }
+    .pfoot { padding: 8px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+
+    /* Supported agents as a slow marquee, edges fading out. */
+    .marquee { flex: 1; min-width: 0; display: flex; gap: 8px; overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+    .marquee ul { flex: none; flex-wrap: nowrap !important; animation: marquee 46s linear infinite; }
+    .marquee:hover ul { animation-play-state: paused; }
+    html:not(.js) .marquee ul.dup { display: none; }
+    html:not(.js) .marquee ul { flex-wrap: wrap !important; animation: none; }
+    @keyframes marquee { to { transform: translateX(calc(-100% - 8px)); } }
+    .agents-strip { justify-content: center; padding-top: 28px; }
+    .agents-strip .note { text-align: center; }
+
+    /* Centered section heads */
+    .section-head.center { display: flex; flex-direction: column; align-items: center; text-align: center; margin-bottom: 40px; }
+    .section-head.center h2 { max-width: 22em; }
+
+    /* Feature tabs: text on the left, the piece of window on the right. */
+    .ftabs { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-bottom: 40px; }
+    html:not(.js) .ftabs { display: none; }
+    .ftab { min-height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 14px; transition: all 0.2s ease; }
+    .ftab:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.22); }
+    .ftab[aria-selected="true"] { color: var(--mint-ink); background: var(--mint); border-color: var(--mint); font-weight: 600; }
+    .fpanels { display: grid; }
+    .fpanel {
+      display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr); column-gap: clamp(40px, 5vw, 88px);
+      align-content: start; align-items: start;
+    }
+    .fpanel > * { grid-column: 1; }
+    .fpanel > .frag { grid-column: 2; grid-row: 1 / span 8; margin: 0; align-self: center; box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+    .fpanel h2 { font-size: clamp(26px, 2.5vw, 36px); }
+    .fpanel > p { margin-top: 12px; max-width: 34em; }
+    .fpanel > p.path { margin-top: 10px; font-size: 13px; }
+    .fpanel .folds { margin-top: 24px; }
+    html:not(.js) .fpanel + .fpanel { margin-top: 72px; }
+    .js .fpanel { grid-area: 1 / 1; transition: opacity 0.4s ease, transform 0.4s ease; }
+    .js .fpanel:not(.on) { opacity: 0; transform: translateY(8px); visibility: hidden; pointer-events: none; }
+    .frag-conf .conf { margin: 0; padding: 12px 16px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.75; color: #e7eef8; white-space: pre-wrap; }
+    .frag-head.over { border-top: 1px solid var(--line); }
+
+    /* Bento */
+    .bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .card {
+      position: relative; overflow: hidden; display: flex; flex-direction: column;
+      padding: 24px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transition: border-color 0.25s ease, transform 0.25s ease;
+    }
+    .card::after {
+      content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity 0.3s ease;
+      background: radial-gradient(400px 160px at var(--mx, 50%) var(--my, 0%), rgba(62, 236, 200, 0.12), transparent 70%);
+    }
+    .card:hover { border-color: rgba(62, 236, 200, 0.3); }
+    .card:hover::after { opacity: 1; }
+    .card.wide { grid-column: span 2; }
+    .card h3 { margin-top: 20px; font-size: 18px; }
+    .card p { margin-top: 6px; font-size: 15px; line-height: 1.65; color: var(--text); text-wrap: pretty; }
+    .viz { min-height: 132px; display: flex; flex-direction: column; justify-content: center; }
+    .viz-stack { gap: 6px; }
+    .layer { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 14px; border-radius: 9px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.25); font-size: 13px; }
+    .layer b { color: var(--ink); font-weight: 600; }
+    .layer span { color: var(--muted); font-size: 12px; }
+    .layer.l1 { border-color: rgba(62, 236, 200, 0.4); background: rgba(62, 236, 200, 0.07); }
+    .layer.l2 { margin: 0 4%; } .layer.l3 { margin: 0 8%; }
+    .viz-term { padding: 14px 16px; border-radius: 10px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px; line-height: 1.8; color: #e7eef8; }
+    .viz-keys { gap: 8px; }
+    .viz-keys span { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+    .viz-keys kbd { min-width: 52px; text-align: center; font-size: 13px; padding: 3px 8px; }
+    .viz-free { flex-direction: row; align-items: center; gap: 14px; }
+    .viz-free .big { font-size: 64px; font-weight: 650; letter-spacing: -0.04em; color: var(--ink); line-height: 1; }
+    .viz-agents { flex-direction: row; flex-wrap: wrap; align-content: center; gap: 8px; }
+    .viz-agents span { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.04); color: var(--ink); font-size: 13px; }
+    .viz-agents .plus { color: var(--muted); border-style: dashed; }
+
+    /* Reveal: rise, unblur, one after another (--d). */
+    .js .reveal { filter: blur(6px); transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), filter 0.7s ease; transition-delay: calc(var(--d, 0) * 80ms); }
+    .js .reveal.in { filter: none; }
     @keyframes pulse { 50% { opacity: 0.35; } }
     @keyframes ring { from { transform: scale(0.7); opacity: 0.85; } to { transform: scale(2.5); opacity: 0; } }
     @keyframes sweep { from { background-position: 100% 0; } to { background-position: -80% 0; } }
@@ -765,7 +963,11 @@
       *, *::before, *::after { animation: none !important; transition: none !important; }
       .badge.working b,
       .badge.working b span { background: none; -webkit-text-fill-color: var(--blue); color: var(--blue); }
-      .js .reveal { opacity: 1; transform: none; }
+      .js .reveal { opacity: 1; transform: none; filter: none; }
+      .js .scene:not(.on) { transform: none; filter: none; }
+      .marquee { mask-image: none; }
+      .marquee ul { flex-wrap: wrap !important; }
+      .marquee ul.dup { display: none; }
     }
 
     /* The mock is drawn at one size; on a wide screen, enlarge it with the column it sits in. */
@@ -888,6 +1090,33 @@
       .frag-side { grid-template-columns: 1fr; }
       .frag-side > div + div { border-left: 0; border-top: 1px solid var(--line); }
     }
+      @media (max-width: 1180px) {
+      .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card.wide:last-child { grid-column: span 2; }
+    }
+    @media (max-width: 980px) {
+      .fpanel { grid-template-columns: 1fr; }
+      .fpanel > .frag { grid-column: 1; grid-row: auto; margin-top: 24px; }
+      .hero { padding: 48px 0 32px; }
+    }
+    @media (max-width: 760px) {
+      .hero { padding: 32px 0 28px; }
+      .pill { font-size: 12px; }
+      .scenes { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; margin-top: 36px; max-width: 100%; scrollbar-width: none; }
+      .scenes::-webkit-scrollbar { display: none; }
+      .scene-tab { padding: 0 12px; font-size: 13px; }
+      .window.demo .sidebar { display: none; }
+      #scene-servers .window.demo .sidebar { display: block; }
+      #scene-servers .main { display: none; }
+      .window.demo .monitor { display: none; }
+      .dline .chip:nth-child(2) { display: none; }
+      .wt-row .dim:last-child { display: none; }
+      .palette { top: 48px; }
+      .acts i:nth-child(n+2) { display: none; }
+      .bento { grid-template-columns: 1fr; }
+      .card.wide, .card.wide:last-child { grid-column: auto; }
+      .ftabs { margin-bottom: 28px; }
+    }
   </style>
 </head>
 <body id="top">
@@ -912,7 +1141,7 @@
   <div class="hero-wrap">
     <div class="wrap hero" id="content">
       <div class="copy">
-        <p class="kicker"><span class="zh">给编程 Agent 的原生 macOS 工作台</span><span class="en">A native macOS workbench for coding agents</span></p>
+        <a class="pill" href="#overview"><span class="new"><span class="zh">新</span><span class="en">New</span></span><span class="zh">每个任务一个独立 worktree，⌘P 跳转或新建</span><span class="en">A worktree per task, and ⌘P to jump or open anything</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
         <h1><span class="zh">一个窗口，<br>看住所有 Agent。</span><span class="en">One window<br>for every agent.</span></h1>
         <p class="lead zh"><strong>谁在运行，谁在等你，一眼看清。</strong>多个编程 Agent、本地目录和 SSH 会话，都在同一个窗口。</p>
         <p class="lead en"><strong>See who is working and who is waiting on you.</strong>Coding agents, local folders, and SSH sessions, all in one window.</p>
@@ -926,7 +1155,15 @@
         <p class="facts"><span class="zh">macOS 14 及以上 · Apple 芯片 · 免费，MIT</span><span class="en">macOS 14 or later · Apple silicon · Free, MIT</span></p>
       </div>
 
+      <div class="scenes" role="tablist" aria-label="Waitlight">
+        <button type="button" role="tab" class="scene-tab" id="sc-watch" aria-controls="scene-watch" aria-selected="true"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.6" fill="currentColor"/><circle cx="4" cy="11.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7.5 4.5h6M7.5 11.5h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="zh">看住每个 Agent</span><span class="en">Watch every agent</span><i class="prog" aria-hidden="true"></i></button>
+        <button type="button" role="tab" class="scene-tab" id="sc-dispatch" aria-controls="scene-dispatch" aria-selected="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="4.5" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="5.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-7 1.6-7 3.8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="zh">派任务，各开 worktree</span><span class="en">Hand out tasks</span><i class="prog" aria-hidden="true"></i></button>
+        <button type="button" role="tab" class="scene-tab" id="sc-servers" aria-controls="scene-servers" aria-selected="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="2" y="9.4" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="4.3" cy="4.1" r=".7" fill="currentColor"/><circle cx="4.3" cy="11.5" r=".7" fill="currentColor"/></svg><span class="zh">本机和服务器</span><span class="en">Mac and servers</span><i class="prog" aria-hidden="true"></i></button>
+        <button type="button" role="tab" class="scene-tab" id="sc-jump" aria-controls="scene-jump" aria-selected="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.2 10.2 3.3 3.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="zh">⌘P 跳转或新建</span><span class="en">⌘P jump or open</span><i class="prog" aria-hidden="true"></i></button>
+      </div>
+
       <div class="stage" id="product">
+        <div class="scene on" id="scene-watch" role="tabpanel" aria-labelledby="sc-watch">
         <div class="window">
           <div class="titlebar">
             <div class="traffic" aria-hidden="true"><i class="r"></i><i class="y"></i><i class="g"></i></div>
@@ -1073,10 +1310,115 @@
           </div>
         </div>
         <p class="caption"><span class="zh"><span class="d-only">可点的界面示意：点会话换终端，「‹ ›」在 Agent 之间切换，右上角可以打开性能面板。「查看总览演示」会跳到下面可以操作的 Agent 总览。</span><span class="m-only">点上方会话切换内容，点「总览」体验多 Agent 管理。</span></span><span class="en"><span class="d-only">A clickable sketch: choose a session to change the terminal, step through agents with ‹ ›, and open the performance panel at the top right. “See the overview demo” jumps down to a working agent overview.</span><span class="m-only">Tap a session above to switch, and tap Overview to try managing several agents.</span></span></p>
+        </div>
+        <div class="scene" id="scene-dispatch" role="tabpanel" aria-labelledby="sc-dispatch">
+          <div class="window demo" aria-hidden="true">
+            <div class="titlebar"><div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div><p class="wt">Waitlight</p><div class="tools"><span class="perf on"><span class="zh">Agent 总览</span><span class="en">Agents</span></span></div></div>
+            <div class="workspace">
+              <div class="sidebar">
+                <p class="side-label"><span class="zh">本机</span><span class="en">This Mac</span></p>
+                <div class="session new-task"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="name"><span class="zh">给 checkout 页补单元测试</span><span class="en">Add unit tests for checkout</span></span><span class="meta"><span class="badge working"><i class="dot work"></i><b><span class="zh">运行中</span><span class="en">Working</span></b></span><span class="folder">shop</span></span><span class="gitl"><svg class="br" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4.5" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11.5" cy="5.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-7 1.6-7 3.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><code class="d-branch"></code><span class="add d-add">+0</span><span class="del">−0</span></span></div>
+                <div class="session wait"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 3.5 2.6 8l3.6 4.5M9.8 3.5 13.4 8 9.8 12.5"/></svg><span class="name"><span class="zh">修跨州订单的税额</span><span class="en">Fix cross-state tax</span></span><span class="meta"><span class="badge waiting"><i class="dot wait"></i><b><span class="zh">等你</span><span class="en">Needs you</span></b></span><span class="folder">shop</span></span><span class="gitl"><svg class="br" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4.5" cy="12.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11.5" cy="5.5" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-7 1.6-7 3.8" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><code>wl/fix-cross-state-tax</code><span class="add">+31</span><span class="del">−9</span></span></div>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.6 9.7 6.3 14.4 8 9.7 9.7 8 14.4 6.3 9.7 1.6 8 6.3 6.3z"/></svg><span class="name">gemini</span><span class="meta"><span class="badge done"><i class="dot done"></i><b><span class="zh">本轮完成</span><span class="en">Turn done</span></b></span><span class="folder">notes</span></span></div>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 4.2 6.6 8 3 11.8M8.2 12h5"/></svg><span class="name">shop</span><span class="meta"><span class="folder">pnpm dev · 12 <span class="zh">分</span><span class="en">m</span></span></span></div>
+              </div>
+              <div class="main">
+                <p class="tabbar"><span class="zh">Agent 总览 · 等你 1 个</span><span class="en">Agents · 1 needs you</span></p>
+                <div class="dbar">
+                  <div class="dline"><span class="chip"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg> Claude Code</span><span class="chip">shop</span><span class="dtype"><span class="typed" data-zh="给 checkout 页补单元测试" data-en="Add unit tests for checkout"></span><span class="caret"></span><span class="ph"><span class="zh">派一个新任务给 Claude Code，回车开始</span><span class="en">Hand Claude Code a new task, press Return</span></span></span></div>
+                  <div class="dline wt-row"><span class="tgl"><i></i></span><span class="zh">独立 worktree</span><span class="en">Own worktree</span><span class="dim"><span class="zh">分支</span><span class="en">branch</span></span><code class="d-branch"></code><span class="dim"><span class="zh">基于</span><span class="en">from</span> main → ~/src/shop.worktrees/<span class="d-folder"></span></span></div>
+                  <p class="dnote">✓ <span class="zh">按 .worktreeinclude 复制了 2 项</span><span class="en">Copied 2 items per .worktreeinclude</span></p>
+                </div>
+                <div class="dlist">
+                  <p class="dash-group"><span class="zh">等你</span><span class="en">Needs you</span></p>
+                  <div class="dash-row"><i class="dot wait"></i><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 3.5 2.6 8l3.6 4.5M9.8 3.5 13.4 8 9.8 12.5"/></svg><span class="who"><span class="zh">修跨州订单的税额</span><span class="en">Fix cross-state tax</span><small>shop</small></span><span class="what warn"><span class="zh">允许修改 CheckoutTax.swift？</span><span class="en">Allow edit to CheckoutTax.swift?</span></span><span class="age">2<span class="zh"> 分</span><span class="en">m</span></span></div>
+                  <p class="dash-group"><span class="zh">运行中</span><span class="en">Working</span></p>
+                  <div class="dash-row new-task"><i class="dot work"></i><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="who"><span class="zh">给 checkout 页补单元测试</span><span class="en">Add unit tests for checkout</span><small>shop</small></span><span class="what"><span class="badge working"><b><span class="zh">运行中</span><span class="en">Working</span></b></span></span><span class="age"><span class="zh">刚刚</span><span class="en">now</span></span></div>
+                  <p class="dash-group"><span class="zh">空闲</span><span class="en">Idle</span></p>
+                  <div class="dash-row"><i class="dot done"></i><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.6 9.7 6.3 14.4 8 9.7 9.7 8 14.4 6.3 9.7 1.6 8 6.3 6.3z"/></svg><span class="who">gemini<small>notes</small></span><span class="what dim"><span class="zh">本轮完成</span><span class="en">Turn done</span></span><span class="age">12<span class="zh"> 分</span><span class="en">m</span></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="caption"><span class="zh">写下任务，回车：Agent 在后台开工，在自己的 worktree 和分支上，你还留在列表里接着派下一个。改了多少行，侧边栏里一直看得见。</span><span class="en">Write the task and press Return. The agent starts in the background, on its own worktree and branch, and you stay on the list to hand out the next one. The sidebar keeps the line counts in view.</span></p>
+        </div>
+        <div class="scene" id="scene-servers" role="tabpanel" aria-labelledby="sc-servers">
+          <div class="window demo show-monitor" aria-hidden="true">
+            <div class="titlebar"><div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div><p class="wt">Waitlight</p><div class="tools"><span class="perf on"><span class="zh">性能</span><span class="en">Stats</span></span></div></div>
+            <div class="workspace">
+              <div class="sidebar">
+                <p class="side-label"><span class="zh">本机</span><span class="en">This Mac</span></p>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="name">claude</span><span class="meta"><span class="badge working"><i class="dot work"></i><b><span class="zh">运行中</span><span class="en">Working</span></b></span><span class="folder">waitlight</span></span></div>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 4.2 6.6 8 3 11.8M8.2 12h5"/></svg><span class="name">~</span><span class="meta"><span class="folder">brew upgrade · 1 <span class="zh">分</span><span class="en">m</span></span></span></div>
+                <p class="side-label host">ecs-prod <i class="dot link"></i></p>
+                <div class="session on"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="name">claude</span><span class="meta"><span class="folder">~/app · tmux</span></span><span class="attached"><span class="zh">已挂回</span><span class="en">Reattached</span></span></div>
+                <p class="side-label host">gpu-box <i class="dot s-dot"></i></p>
+                <div class="session s-gpu"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 4.2 6.6 8 3 11.8M8.2 12h5"/></svg><span class="name">train</span><span class="meta"><span class="state-off s-off"><span class="zh">已断开</span><span class="en">Disconnected</span></span><span class="folder s-on">~/runs · tmux</span></span><span class="redo s-off"><span class="zh">重连</span><span class="en">Reconnect</span></span></div>
+                <p class="side-label host">nas</p>
+                <div class="tmux-list"><p><span class="zh">服务器上已有的会话</span><span class="en">Sessions on this server</span></p><div><code>backup</code><span class="redo"><span class="zh">附加</span><span class="en">Attach</span></span></div><div><code>agents</code><span class="redo"><span class="zh">附加</span><span class="en">Attach</span></span></div></div>
+                <p class="side-label others"><span class="zh">其他服务器 9</span><span class="en">Other servers 9</span></p>
+              </div>
+              <div class="main">
+                <p class="tabbar">ecs-prod · ~/app · tmux</p>
+                <div class="term on">
+                  <p class="dim">ssh ecs-prod</p>
+                  <p class="gap"><span class="zh">已重新挂上。原来的 tmux 会话还在，里面的 Agent 也在。</span><span class="en">Reattached. The tmux session is still there, agent included.</span></p>
+                  <p class="gap"><span class="info">●</span> Editing src/orders/handler.go</p>
+                  <p><span class="add">+ 42</span> <span class="del">− 7</span> <span class="dim">handler.go</span></p>
+                  <p class="gap"><span class="info">●</span> <span class="s-log">go test ./orders/...</span></p>
+                  <p class="dim gap"><span class="zh">这台机器上没有为 Waitlight 安装任何东西。</span><span class="en">Nothing was installed on this machine for Waitlight.</span></p>
+                </div>
+              </div>
+              <aside class="monitor">
+                <p class="mh"><span><span class="zh">性能</span><span class="en">Stats</span></span><span class="sample"><span class="zh">示意</span><span class="en">Sample</span></span></p>
+                <p class="where">ecs-prod · Linux</p>
+                <div class="metric"><div class="ml"><span>CPU</span><span class="s-cpu">61%</span></div><div class="bar"><i class="wob" style="width:61%"></i></div><div class="cores live"><i style="height:70%"></i><i style="height:84%"></i><i style="height:55%"></i><i style="height:76%"></i></div></div>
+                <div class="metric"><div class="ml"><span><span class="zh">内存</span><span class="en">Memory</span></span><span>7.1 / 16 GB</span></div><div class="bar mem"><i style="width:44%"></i></div></div>
+                <div class="metric"><div class="ml"><span><span class="zh">网络</span><span class="en">Network</span></span><span>↓ 8.4 MB/s</span></div></div>
+                <p class="note"><span class="zh">一条 SSH，读 /proc，不用装东西。</span><span class="en">One SSH connection reading /proc. Nothing installed.</span></p>
+              </aside>
+            </div>
+          </div>
+          <p class="caption"><span class="zh">侧边栏按机器分组。断线的会话一键重连，挂回服务器上原来的 tmux / zellij 会话；展开一台服务器，就列出它上面已有的会话。</span><span class="en">The sidebar is grouped by machine. A dropped session reconnects in one click, back into the same tmux or zellij session; open a server and it lists the sessions already on it.</span></p>
+        </div>
+        <div class="scene" id="scene-jump" role="tabpanel" aria-labelledby="sc-jump">
+          <div class="window demo" aria-hidden="true">
+            <div class="titlebar"><div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div><p class="wt">Waitlight</p><div class="tools"></div></div>
+            <div class="workspace">
+              <div class="sidebar">
+                <p class="side-label"><span class="zh">本机</span><span class="en">This Mac</span></p>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="name">claude</span><span class="meta"><span class="badge working"><i class="dot work"></i><b><span class="zh">运行中</span><span class="en">Working</span></b></span><span class="folder">waitlight</span></span></div>
+                <div class="session wait"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 3.5 2.6 8l3.6 4.5M9.8 3.5 13.4 8 9.8 12.5"/></svg><span class="name">codex</span><span class="meta"><span class="badge waiting"><i class="dot wait"></i><b><span class="zh">等你</span><span class="en">Needs you</span></b></span><span class="folder">shop</span></span></div>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.6 9.7 6.3 14.4 8 9.7 9.7 8 14.4 6.3 9.7 1.6 8 6.3 6.3z"/></svg><span class="name">gemini</span><span class="meta"><span class="badge done"><i class="dot done"></i><b><span class="zh">本轮完成</span><span class="en">Turn done</span></b></span><span class="folder">notes</span></span></div>
+                <p class="side-label host">ecs-prod <i class="dot link"></i></p>
+                <div class="session"><svg class="kind" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1.2 9.15 6.2 14.2 8 9.15 9.8 8 14.8 6.85 9.8 1.8 8l5.05-1.8z"/></svg><span class="name">claude</span><span class="meta"><span class="folder">~/app · tmux</span></span></div>
+              </div>
+              <div class="main dimmed">
+                <p class="tabbar">claude · waitlight</p>
+                <div class="term on"><p><span class="info">●</span> Editing Sources/UI/QuickOpen.swift</p><p><span class="add">+ 120</span> <span class="del">− 4</span></p></div>
+              </div>
+            </div>
+            <div class="palette">
+              <div class="pq"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m10.2 10.2 3.3 3.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span class="typed" data-zh="shop" data-en="shop"></span><span class="caret"></span><span class="ph"><span class="zh">跳转或新建…</span><span class="en">Jump or open…</span></span><kbd>esc</kbd></div>
+              <div class="pres">
+                <p class="pg"><span class="zh">会话</span><span class="en">Sessions</span></p>
+                <div class="pr" data-r="0"><svg class="kind" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 3.5 2.6 8l3.6 4.5M9.8 3.5 13.4 8 9.8 12.5"/></svg><span class="pt"><b>codex</b> <span class="dim">~/src/shop</span></span><span class="badge waiting"><i class="dot wait"></i><b><span class="zh">等你</span><span class="en">Needs you</span></b></span></div>
+                <p class="pg"><span class="zh">文件夹</span><span class="en">Folders</span></p>
+                <div class="pr" data-r="1"><svg class="kind" viewBox="0 0 16 16"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.4 1.6h5.2c.8 0 1.4.6 1.4 1.4v6c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="pt"><b>~/src/shop</b></span><span class="acts"><i>Shell</i><i>Claude Code</i><i>Codex</i></span></div>
+                <div class="pr" data-r="2"><svg class="kind" viewBox="0 0 16 16"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.4 1.6h5.2c.8 0 1.4.6 1.4 1.4v6c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span class="pt"><b>~/src/shop.worktrees/fix-cross-state-tax</b></span><span class="acts"><i>Shell</i><i>Claude Code</i><i>Codex</i></span></div>
+                <p class="pg"><span class="zh">服务器</span><span class="en">Servers</span></p>
+                <div class="pr" data-r="3"><svg class="kind" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9.4" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/></svg><span class="pt"><b>shop-staging</b> <span class="dim">10.0.3.21</span></span><span class="acts"><i><span class="zh">新会话</span><span class="en">New session</span></i><i><span class="zh">附加 deploy</span><span class="en">Attach deploy</span></i></span></div>
+              </div>
+              <p class="pfoot"><span class="zh">↑↓ 选择 · ⇥ 换动作 · ↩ 打开 · esc 关闭</span><span class="en">↑↓ select · ⇥ action · ↩ open · esc close</span></p>
+            </div>
+          </div>
+          <p class="caption"><span class="zh">一个输入框：已开的会话、所有服务器、最近的文件夹。回车跳过去，<kbd>⇥</kbd> 选用 Shell 还是哪个 Agent 打开。</span><span class="en">One field for open sessions, every server, and recent folders. Return jumps there; <kbd>⇥</kbd> picks a shell or which agent to open it with.</span></p>
+        </div>
       </div>
     </div>
     <div class="wrap agents-strip" aria-labelledby="agents-label">
       <p class="label" id="agents-label"><span class="zh">内置支持</span><span class="en">Works with</span></p>
+      <div class="marquee">
       <ul>
           <li>Claude Code</li>
           <li>Codex</li>
@@ -1092,6 +1434,22 @@
           <li>Aider</li>
           <li class="plus"><span class="zh">+ 任意命令行工具</span><span class="en">+ any CLI</span></li>
       </ul>
+      <ul class="dup" aria-hidden="true">
+          <li>Claude Code</li>
+          <li>Codex</li>
+          <li>Gemini</li>
+          <li>Grok</li>
+          <li>opencode</li>
+          <li>Qwen Code</li>
+          <li>Cursor CLI</li>
+          <li>Copilot CLI</li>
+          <li>Droid</li>
+          <li>Amp</li>
+          <li>Crush</li>
+          <li>Aider</li>
+          <li class="plus"><span class="zh">+ 任意命令行工具</span><span class="en">+ any CLI</span></li>
+      </ul>
+      </div>
       <p class="note"><span class="zh">自动检测你装了哪些，菜单里只列这些；没装的在 App 里点「安装」就行。</span><span class="en">Waitlight detects which ones you have and lists only those. Install the rest from inside the app.</span></p>
     </div>
   </div>
@@ -1105,7 +1463,7 @@
   <main>
     <section class="block" id="status">
       <div class="wrap reveal">
-        <div class="section-head">
+        <div class="section-head center">
           <p class="eyebrow"><span class="zh">状态</span><span class="en">Status</span></p>
           <h2><span class="zh">不用切过去，也知道该看谁。</span><span class="en">See who needs you without switching over.</span></h2>
           <p class="intro"><span class="zh">每个 Agent 旁边都有一盏状态灯。四种颜色，四个意思。</span><span class="en">Every agent carries a status light. Four colors, four meanings.</span></p>
@@ -1168,7 +1526,7 @@
 
     <section class="block" id="overview">
       <div class="wrap reveal">
-        <div class="section-head">
+        <div class="section-head center">
           <p class="eyebrow"><span class="zh">总览</span><span class="en">Overview</span></p>
           <h2><span class="zh">所有 Agent，列在一屏里。</span><span class="en">Every agent, on one screen.</span></h2>
           <p class="intro"><span class="zh"><kbd>⇧⌘A</kbd> 把终端换成一张列表，每个 Agent 一行。会话都还在后台跑着。</span><span class="en"><kbd>⇧⌘A</kbd> swaps the terminal for a list, one row per agent. Every session keeps running behind it.</span></p>
@@ -1302,8 +1660,17 @@
 
     <section class="block" id="remote">
       <div class="wrap reveal">
-        <div class="pair">
-          <article>
+        <div class="section-head center">
+          <p class="eyebrow"><span class="zh">日常</span><span class="en">Day to day</span></p>
+          <h2><span class="zh">本机、服务器、上次的对话，都在手边。</span><span class="en">This Mac, your servers, last week's conversation: all at hand.</span></h2>
+        </div>
+        <div class="ftabs" role="tablist" aria-label="Waitlight">
+          <button type="button" role="tab" class="ftab" id="ft-remote" aria-controls="fp-remote" aria-selected="true"><span class="zh">远程服务器</span><span class="en">Remote servers</span></button>
+          <button type="button" role="tab" class="ftab" id="ft-memory" aria-controls="memory" aria-selected="false"><span class="zh">恢复对话</span><span class="en">Conversations</span></button>
+          <button type="button" role="tab" class="ftab" id="ft-ghostty" aria-controls="fp-ghostty" aria-selected="false"><span class="zh">Ghostty 终端</span><span class="en">Ghostty terminal</span></button>
+        </div>
+        <div class="fpanels">
+          <article class="fpanel on" id="fp-remote" role="tabpanel" aria-labelledby="ft-remote">
             <p class="eyebrow"><span class="zh">远程</span><span class="en">Remote</span></p>
             <h2><span class="zh">本地和远程，排在同一条侧边栏。</span><span class="en">Local and remote, in the same sidebar.</span></h2>
             <p><span class="zh">侧边栏按机器分段：本机一段，每台开着会话的服务器各一段。<span class="path">~/.ssh/config</span> 里的主机直接能连，服务器上什么都不用装。断线重连后，跑在 tmux 或 zellij 里的会话会挂回原处。</span><span class="en">The sidebar is grouped by machine: one section for this Mac, one for each server with sessions open. Hosts from <span class="path">~/.ssh/config</span> work as they are, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was.</span></p>
@@ -1354,7 +1721,7 @@
               </details>
             </div>
           </article>
-          <article id="memory">
+          <article class="fpanel" id="memory" role="tabpanel" aria-labelledby="ft-memory">
             <p class="eyebrow"><span class="zh">对话</span><span class="en">Conversations</span></p>
             <h2><span class="zh">重新打开，接着之前的工作。</span><span class="en">Open it again and pick up where you were.</span></h2>
             <p><span class="zh">重启 App，或者重新启动一个已经退出的 Agent，Claude Code、Grok 和 Codex 会回到同一段对话。分屏、分组和 SSH 连接也按退出前的样子回来。</span><span class="en">Relaunch the app, or start an agent that had exited, and Claude Code, Grok, and Codex return to the same conversation. Splits, groups, and SSH connections come back the way you left them.</span></p>
@@ -1379,20 +1746,80 @@
               </details>
             </div>
           </article>
+          <article class="fpanel" id="fp-ghostty" role="tabpanel" aria-labelledby="ft-ghostty">
+            <p class="eyebrow">Ghostty</p>
+            <h2><span class="zh">每一格都是真正的 Ghostty 终端</span><span class="en">Every pane is a real Ghostty terminal</span></h2>
+            <p><span class="zh">字体、主题和快捷键直接沿用你的 Ghostty 配置。在 Waitlight 的设置里改过的项只叠在上面，不会写回这份文件。主题里过暗的文字（比如 zsh 的联想）会自动提亮，换哪个主题都看得清。</span><span class="en">Fonts, themes, and keybinds come straight from your Ghostty config. Changes made in Waitlight's settings are layered on top and never written back to the file. Text a theme makes too dim, such as zsh suggestions, is brightened so it stays readable.</span></p>
+            <div class="frag frag-conf" aria-hidden="true">
+              <p class="frag-head"><b>~/.config/ghostty/config</b><span class="chip"><span class="zh">沿用</span><span class="en">used as is</span></span></p>
+              <pre class="conf"><span class="dim"># <span class="zh">你原来的 Ghostty 配置</span><span class="en">your Ghostty config, unchanged</span></span>
+font-family = <span class="add">"JetBrains Mono"</span>
+font-size = <span class="info">14</span>
+theme = <span class="add">"Catppuccin Mocha"</span>
+keybind = <span class="info">cmd+d</span>=new_split:right
+macos-option-as-alt = <span class="info">true</span></pre>
+              <p class="frag-head over"><b><span class="zh">Waitlight 设置里改的</span><span class="en">Changed in Waitlight settings</span></b><span class="chip"><span class="zh">叠在上面</span><span class="en">layered on top</span></span></p>
+              <pre class="conf">font-size = <span class="info">15</span>
+minimum-contrast = <span class="info">3</span>  <span class="dim"># <span class="zh">暗字自动提亮</span><span class="en">dim text brightened</span></span></pre>
+            </div>
+          </article>
         </div>
-        <aside class="ghostty">
-          <div>
-            <h3><span class="zh">每一格都是真正的 Ghostty 终端</span><span class="en">Every pane is a real Ghostty terminal</span></h3>
-            <p class="path">~/.config/ghostty/config</p>
-          </div>
-          <p><span class="zh">字体、主题和快捷键直接沿用你的 Ghostty 配置。在 Waitlight 的设置里改过的项只叠在上面，不会写回这份文件。主题里过暗的文字（比如 zsh 的联想）会自动提亮，换哪个主题都看得清。</span><span class="en">Fonts, themes, and keybinds come straight from your Ghostty config. Changes made in Waitlight's settings are layered on top and never written back to the file. Text a theme makes too dim, such as zsh suggestions, is brightened so it stays readable.</span></p>
-        </aside>
+      </div>
+    </section>
+
+    <section class="block" id="why">
+      <div class="wrap">
+        <div class="section-head center reveal">
+          <p class="eyebrow"><span class="zh">为什么是 Waitlight</span><span class="en">Why Waitlight</span></p>
+          <h2><span class="zh">原生、轻，只管一件事：哪个 Agent 在等你。</span><span class="en">Native, light, and focused on one thing: which agent needs you.</span></h2>
+        </div>
+        <div class="bento">
+          <article class="card wide reveal" style="--d:0">
+            <div class="viz viz-stack" aria-hidden="true">
+              <div class="layer l1"><b>Waitlight</b><span>Swift · AppKit · SwiftUI</span></div>
+              <div class="layer l2"><b>libghostty</b><span><span class="zh">终端内核</span><span class="en">terminal core</span></span></div>
+              <div class="layer l3"><b>Metal</b><span><span class="zh">GPU 绘制</span><span class="en">GPU rendering</span></span></div>
+            </div>
+            <h3><span class="zh">原生 macOS 应用</span><span class="en">A native macOS app</span></h3>
+            <p><span class="zh">用 Swift 写，终端用的是 Ghostty 的内核 libghostty，用 Metal 绘制。不是套了一层网页的壳。</span><span class="en">Written in Swift, with Ghostty's own core, libghostty, drawing every terminal through Metal. Not a web page in a wrapper.</span></p>
+          </article>
+          <article class="card reveal" style="--d:1">
+            <div class="viz viz-term" aria-hidden="true">
+              <p><span class="ps">❯</span> ssh ecs-prod</p>
+              <p><span class="ps">$</span> tmux attach -t agents</p>
+              <p class="dim"># <span class="zh">不装代理程序，不装守护进程</span><span class="en">no agent to install, no daemon</span></p>
+            </div>
+            <h3><span class="zh">服务器上什么都不装</span><span class="en">Nothing to install on servers</span></h3>
+            <p><span class="zh">只用 SSH，有 tmux 或 zellij 就用它们。生产机、NAS 都能放心连。</span><span class="en">Just SSH, plus tmux or zellij if the machine has them. Safe for production boxes and NAS alike.</span></p>
+          </article>
+          <article class="card reveal" style="--d:2">
+            <div class="viz viz-keys" aria-hidden="true">
+              <span><kbd>⌘⇧J</kbd><span class="zh">下一个等你的</span><span class="en">next that needs you</span></span>
+              <span><kbd>⇧⌘A</kbd><span class="zh">Agent 总览</span><span class="en">agent overview</span></span>
+              <span><kbd>⌘P</kbd><span class="zh">跳转或新建</span><span class="en">jump or open</span></span>
+            </div>
+            <h3><span class="zh">键盘就够</span><span class="en">The keyboard is enough</span></h3>
+            <p><span class="zh">跳到下一个等你的 Agent、打开总览、找会话，都有快捷键。</span><span class="en">Jumping to the next agent that needs you, the overview, finding a session: all on keys.</span></p>
+          </article>
+          <article class="card reveal" style="--d:3">
+            <div class="viz viz-free" aria-hidden="true"><span class="big">$0</span><span class="chip">MIT</span></div>
+            <h3><span class="zh">免费，开源</span><span class="en">Free and open source</span></h3>
+            <p><span class="zh">MIT 协议，代码都在 GitHub。不用注册账号。</span><span class="en">MIT licensed, with all the code on GitHub. No account to sign up for.</span></p>
+          </article>
+          <article class="card wide reveal" style="--d:4">
+            <div class="viz viz-agents" aria-hidden="true">
+              <span>Claude Code</span><span>Codex</span><span>Gemini</span><span>Grok</span><span>opencode</span><span>Qwen Code</span><span>Cursor CLI</span><span>Copilot CLI</span><span>Droid</span><span>Amp</span><span>Crush</span><span>Aider</span><span class="plus"><span class="zh">+ 任意命令行工具</span><span class="en">+ any CLI</span></span>
+            </div>
+            <h3><span class="zh">你的 Agent，你的订阅</span><span class="en">Your agents, your subscriptions</span></h3>
+            <p><span class="zh">Waitlight 不代理、不转发任何请求：每个 Agent 用的都是你自己装好、登录好的那个。</span><span class="en">Waitlight never proxies or relays a request: each agent is the one you installed and signed in to yourself.</span></p>
+          </article>
+        </div>
       </div>
     </section>
 
     <section class="block" id="keys">
       <div class="wrap reveal">
-        <div class="section-head">
+        <div class="section-head center">
           <p class="eyebrow"><span class="zh">快捷键</span><span class="en">Keys</span></p>
           <h2><span class="zh">手不用离开键盘。</span><span class="en">Keep your hands on the keyboard.</span></h2>
         </div>
@@ -2033,6 +2460,171 @@ Parts of Sources/Ghostty/ are adapted from Ghostty&#x27;s macOS app under that l
       });
 
       reset();
+    })();
+  </script>
+  <script>
+    // Hero scenes (tabs over the stage), the feature tabs, and the bento glow.
+    (function () {
+      var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var en = document.documentElement.lang === "en";
+      function $(sel, ctx) { return (ctx || document).querySelector(sel); }
+      function $$(sel, ctx) { return Array.prototype.slice.call((ctx || document).querySelectorAll(sel)); }
+      function cls(el, name, on) { el.classList.toggle(name, !!on); }
+
+      // Tabs: a tablist whose tabs point at their panels with aria-controls.
+      function tabs(list, onShow) {
+        var all = $$('[role="tab"]', list);
+        function show(tab, focus) {
+          all.forEach(function (t) {
+            var on = t === tab;
+            t.setAttribute("aria-selected", on ? "true" : "false");
+            t.tabIndex = on ? 0 : -1;
+            cls(document.getElementById(t.getAttribute("aria-controls")), "on", on);
+          });
+          if (focus) tab.focus();
+          if (onShow) onShow(tab);
+        }
+        all.forEach(function (t, i) {
+          t.addEventListener("click", function () { show(t); list.dispatchEvent(new Event("chosen")); });
+          t.addEventListener("keydown", function (e) {
+            var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+            if (!d) return;
+            e.preventDefault();
+            show(all[(i + d + all.length) % all.length], true);
+            list.dispatchEvent(new Event("chosen"));
+          });
+        });
+        show(all.filter(function (t) { return t.getAttribute("aria-selected") === "true"; })[0] || all[0]);
+        return { tabs: all, show: show };
+      }
+
+      // Each scene plays a short script when it comes up; leaving it stops it.
+      var timers = [];
+      function later(ms, fn) { timers.push(setTimeout(fn, reduce ? 0 : ms)); }
+      function stop() { timers.forEach(clearTimeout); timers = []; }
+      function type(el, text, ms, done) {
+        el.textContent = "";
+        if (reduce) { el.textContent = text; if (done) done(); return; }
+        var i = 0;
+        (function next() {
+          el.textContent = text.slice(0, ++i);
+          if (i < text.length) later(ms + Math.random() * ms, next); else if (done) later(300, done);
+        })();
+      }
+      var SCRIPTS = {
+        "scene-dispatch": function (sc) {
+          var typed = $(".typed", sc), task = typed.getAttribute(en ? "data-en" : "data-zh");
+          // What Waitlight would name the branch for this task.
+          var branch = en ? "wl/add-unit-tests-for-checkout" : "wl/checkout";
+          $$(".new-task", sc).forEach(function (el) { cls(el, "show", false); });
+          cls($(".dnote", sc), "show", false);
+          $$(".d-branch", sc).forEach(function (el) { el.textContent = branch; });
+          $(".d-folder", sc).textContent = branch.slice(3);
+          $(".d-add", sc).textContent = "+0";
+          later(600, function () {
+            type(typed, task, 55, function () {
+              later(500, function () {
+                typed.textContent = "";
+                $$(".new-task", sc).forEach(function (el) { cls(el, "show", true); });
+                cls($(".dnote", sc), "show", true);
+                var n = 0, add = $(".d-add", sc);
+                (function grow() {
+                  n += 3 + Math.floor(Math.random() * 9);
+                  add.textContent = "+" + n;
+                  if (n < 64) later(450, grow);
+                })();
+              });
+            });
+          });
+        },
+        "scene-servers": function (sc) {
+          var row = $(".s-gpu", sc), dot = $(".s-dot", sc), log = $(".s-log", sc);
+          cls(row, "back", false); cls(dot, "back", false);
+          log.textContent = "go test ./orders/...";
+          log.className = "s-log";
+          later(2200, function () { cls(row, "back", true); cls(dot, "back", true); });
+          later(3400, function () { log.textContent = "ok  orders  1.84s"; log.className = "s-log add"; });
+        },
+        "scene-jump": function (sc) {
+          var typed = $(".typed", sc), res = $(".pres", sc), rows = $$(".pr", sc);
+          cls(res, "show", false);
+          function sel(i, act) {
+            rows.forEach(function (r, j) {
+              cls(r, "sel", j === i);
+              $$(".acts i", r).forEach(function (a, k) { cls(a, "hot", j === i && k === act); });
+            });
+          }
+          sel(-1, -1);
+          later(500, function () {
+            type(typed, "shop", 120, function () {
+              cls(res, "show", true); sel(0, -1);
+              later(1100, function () { sel(1, 0); });
+              later(2000, function () { sel(1, 1); });
+              later(2900, function () { sel(1, 2); });
+              later(3800, function () { sel(1, 1); });
+            });
+          });
+        }
+      };
+
+      var list = $(".scenes"), stage = $("#product");
+      if (list && stage) {
+        var MS = 7000, auto = !reduce, cycle = null, inView = true, hovering = false, t;
+        list.style.setProperty("--scene-ms", MS + "ms");
+        function restart() {
+          clearTimeout(cycle);
+          if (!auto || !t) return;
+          // Start the progress bar over, on the tab now selected.
+          cls(list, "auto", false); void list.offsetWidth; cls(list, "auto", true);
+          if (!inView || hovering) return;
+          cycle = setTimeout(next, MS);
+        }
+        function next() {
+          var i = t.tabs.findIndex(function (x) { return x.getAttribute("aria-selected") === "true"; });
+          t.show(t.tabs[(i + 1) % t.tabs.length]);
+        }
+        t = tabs(list, function (tab) {
+          stop();
+          // On a phone the tabs scroll sideways: keep the current one in view (never the page).
+          if (list.scrollWidth > list.clientWidth) list.scrollTo({ left: tab.offsetLeft - 12, behavior: reduce ? "auto" : "smooth" });
+          var id = tab.getAttribute("aria-controls"), run = SCRIPTS[id];
+          if (run) run(document.getElementById(id));
+          restart();
+        });
+        restart();
+        // Once you do anything with the stage, it stays on your scene.
+        function settle() { auto = false; clearTimeout(cycle); cls(list, "auto", false); }
+        list.addEventListener("chosen", settle);
+        stage.addEventListener("pointerdown", settle);
+        stage.addEventListener("keydown", settle);
+        stage.addEventListener("pointerenter", function (e) {
+          if (e.pointerType !== "mouse") return;
+          hovering = true; clearTimeout(cycle); cls(list, "paused", true);
+        });
+        stage.addEventListener("pointerleave", function (e) {
+          if (e.pointerType !== "mouse") return;
+          hovering = false; cls(list, "paused", false); if (auto) restart();
+        });
+        if ("IntersectionObserver" in window) {
+          new IntersectionObserver(function (entries) {
+            inView = entries[0].isIntersecting;
+            if (inView) restart(); else clearTimeout(cycle);
+          }, { threshold: 0.3 }).observe(stage);
+        }
+        document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(cycle); else restart(); });
+      }
+
+      var ft = $(".ftabs");
+      if (ft) tabs(ft);
+
+      // Bento cards: a soft light follows the pointer.
+      $$(".card").forEach(function (card) {
+        card.addEventListener("pointermove", function (e) {
+          var r = card.getBoundingClientRect();
+          card.style.setProperty("--mx", (e.clientX - r.left) + "px");
+          card.style.setProperty("--my", (e.clientY - r.top) + "px");
+        });
+      });
     })();
   </script>
 </body>

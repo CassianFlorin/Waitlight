@@ -27,6 +27,11 @@ import SwiftUI
 ///   open:<n>                   open the n-th agent as the dashboard does
 ///   dispatch:<agentID>:<dir>:<prompt>   hand a task to a new agent, as the dashboard's field does
 ///   wtdispatch:<agentID>:<dir>:<prompt> the same, in a new worktree with the branch named after the task
+///   rdispatch:<agentID>:<host name>:<dir>:<prompt>   the same on a server (run with
+///                              WAITLIGHT_FAKE_SSH=1 to have "servers" be this Mac)
+///   rwtdispatch:<agentID>:<host name>:<dir>:<prompt> on a server, in a new worktree
+///   dispatchto:<host name>:<dir>   point the dashboard's dispatch bar at a server folder (dir "?": its picker)
+///   rprobe:<host name>:<dir>   log what the dispatch bar learns about a server folder
 ///   git                        log each session's worktree, branch and change counts
 ///   rmworktree:<n>             close session n (sidebar order) and remove its worktree
 ///   sidebar                    log the sidebar's servers and each session's one-line shell info
@@ -190,6 +195,35 @@ enum DebugHooks {
                     } catch {
                         log("wtdispatch failed: \(error.localizedDescription)")
                     }
+                }
+            }
+        case "rdispatch", "rwtdispatch":
+            let parts = arg.split(separator: ":", maxSplits: 3).map(String.init)
+            if parts.count == 4, let kind = workspace.catalog.agent(id: parts[0]),
+               let host = workspace.hosts.first(where: { $0.name == parts[1] }) {
+                Task {
+                    do {
+                        let s = try await workspace.dispatch(parts[3], to: kind, on: host, in: parts[2],
+                                                             worktree: verb == "rwtdispatch" ? Git.branchName(for: parts[3]) : nil)
+                        log("\(verb) ok remote=\(String(describing: s?.remote)) worktree=\(String(describing: s?.worktree)) note=\(s?.setupNote ?? "-")")
+                    } catch {
+                        log("\(verb) failed: \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                log("\(verb): need <agentID>:<host name>:<dir>:<prompt> with a saved host")
+            }
+        case "dispatchto":
+            let parts = arg.split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let host = workspace.hosts.first(where: { $0.name == parts[0] }) {
+                workspace.debugDispatchFolder = RemoteFolder(hostID: host.id, path: parts[1])
+            }
+        case "rprobe":
+            let parts = arg.split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let host = workspace.hosts.first(where: { $0.name == parts[0] }) {
+                Task {
+                    do { log("rprobe \(try await RemoteGit.probe(host, directory: parts[1]))") }
+                    catch { log("rprobe failed: \(error.localizedDescription)") }
                 }
             }
         case "serveropen":

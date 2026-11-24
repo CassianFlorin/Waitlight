@@ -159,6 +159,9 @@ struct RemoteRef: Codable, Hashable {
     /// tmux / zellij session name on the server (nil when persistence is .none).
     /// With .auto it is only used if the server turns out to have a multiplexer.
     var sessionName: String?
+    /// Where on the server the session works, when not the host's folder: a
+    /// task handed out there (its worktree, or the folder it was given).
+    var directory: String?
 }
 
 /// ~/Library/Application Support/Waitlight/hosts.json

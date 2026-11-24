@@ -651,6 +651,18 @@ private struct ShellRow: View {
     @EnvironmentObject private var workspace: Workspace
 
     var body: some View {
+        // A task handed out on a server: its worktree's branch and changes too.
+        if session.worktree != nil, let git = session.git {
+            VStack(alignment: .leading, spacing: 2) {
+                line
+                GitLine(git: git, isWorktree: true).padding(.leading, 24)
+            }
+        } else {
+            line
+        }
+    }
+
+    private var line: some View {
         HStack(spacing: 6) {
             Image(systemName: session.remote == nil ? session.kind.symbol : "terminal")
                 .frame(width: 18)
@@ -701,6 +713,11 @@ private struct ShellRow: View {
     private var help: String {
         var parts = [session.remote == nil ? session.directory.abbreviatingHome : (session.remoteLabel ?? "")]
         if let command = session.shellCommand { parts.append("正在运行：\(command.text)") }
+        if let wt = session.worktree {
+            parts.append("worktree：\(wt.path)，分支 \(wt.branch)，从 \(wt.base) 分出")
+        } else if let dir = session.remote?.directory {
+            parts.append(dir)
+        }
         if let git = session.git { parts.append("分支 \(git.branch)") }
         if case .needsAttention(let msg?) = session.status { parts.append(msg) }
         return parts.filter { !$0.isEmpty }.joined(separator: "\n")

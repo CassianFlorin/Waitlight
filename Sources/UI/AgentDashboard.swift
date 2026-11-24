@@ -233,7 +233,9 @@ struct AgentDashboard: View {
 /// Hand a task to a new agent: pick the agent and the folder, write the task,
 /// Return. You stay on the list, so several can go out in a row. In a git
 /// repository the task can get a worktree of its own (on by default), so
-/// agents working side by side never touch each other's files.
+/// agents working side by side never touch each other's files. The folder
+/// can be on a server: the worktree is made there, and the agent runs there
+/// in a tmux session, over ssh alone.
 private struct AgentDispatchBar: View {
     /// The selected row's folder: the likeliest place for the next task.
     let suggestedDirectory: String?
@@ -242,6 +244,10 @@ private struct AgentDispatchBar: View {
     @AppStorage("dashboard.dispatchAgent") private var agentID = ""
     @AppStorage("dashboard.isolate") private var isolate = true
     @State private var directory: String?
+    /// A folder on a server, when that is where the task goes.
+    @State private var serverFolder: RemoteFolder?
+    @State private var choosingServerFolder = false
+    @State private var probing = false
     @State private var prompt = ""
     /// Typed by you; empty means the one made from the task.
     @State private var branch = ""
@@ -254,7 +260,19 @@ private struct AgentDispatchBar: View {
 
     private struct RepoInfo: Equatable {
         var branch: String
+        /// Where worktrees go, as shown (`~/…`).
         var container: String
+    }
+
+    /// The server folder's host, while it still exists.
+    private var server: RemoteHost? {
+        serverFolder.flatMap { f in workspace.hosts.first { $0.id == f.hostID } }
+    }
+
+    /// What `.task` watches: a change of folder, here or on a server.
+    private var placeKey: String {
+        if let serverFolder, let server { return server.id.uuidString + ":" + serverFolder.path }
+        return folder
     }
 
     /// Only agents that can be started with a prompt.
@@ -278,25 +296,48 @@ private struct AgentDispatchBar: View {
                     .fixedSize()
                     Menu {
                         ForEach(workspace.recentDirectories, id: \.self) { dir in
-                            Button(dir.abbreviatingHome) { directory = dir }
+                            Button(dir.abbreviatingHome) { directory = dir; serverFolder = nil }
                         }
                         if !workspace.recentDirectories.isEmpty { Divider() }
                         Button("选择文件夹…", action: pickFolder)
+                        Divider()
+                        Section("服务器") {
+                            ForEach(recentServerFolders, id: \.folder) { item in
+                                Button("\(item.host.name)：\(item.folder.path)") { serverFolder = item.folder }
+                            }
+                            Button("服务器上的文件夹…") { choosingServerFolder = true }
+                        }
                     } label: {
-                        Label((folder as NSString).lastPathComponent, systemImage: "folder")
+                        if let server, let serverFolder {
+                            Label("\(server.name)：\((serverFolder.path as NSString).lastPathComponent)",
+                                  systemImage: "server.rack")
+                        } else {
+                            Label((folder as NSString).lastPathComponent, systemImage: "folder")
+                        }
                     }
                     .fixedSize()
-                    .help(folder.abbreviatingHome)
+                    .help(server.map { "\($0.name)（\($0.address)）上的 \(serverFolder?.path ?? "")" } ?? folder.abbreviatingHome)
+                    .popover(isPresented: $choosingServerFolder, arrowEdge: .bottom) {
+                        ServerFolderPicker(initial: serverFolder) { picked in
+                            serverFolder = picked
+                            choosingServerFolder = false
+                        }
+                        .environmentObject(workspace)
+                    }
                     TextField("派一个新任务给 \(agent.name)，回车开始", text: $prompt)
                         .textFieldStyle(.plain)
                         .onSubmit(send)
                         .disabled(busy)
                     if busy {
                         ProgressView().controlSize(.small)
-                        Text(isolating ? "正在建 worktree…" : "正在启动…")
+                        Text(isolating ? (server != nil ? "正在服务器上建 worktree…" : "正在建 worktree…") : "正在启动…")
                             .font(.caption).foregroundStyle(.secondary)
+                    } else if probing {
+                        ProgressView().controlSize(.small)
+                        Text("正在看服务器上的文件夹…").font(.caption).foregroundStyle(.secondary)
                     }
-                    if catalog.isInstalled(agent) == false {
+                    // Installed here says nothing about the server.
+                    if server == nil, catalog.isInstalled(agent) == false {
                         Label("未安装", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
                     }
@@ -332,13 +373,33 @@ private struct AgentDispatchBar: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
-            .task(id: folder) {
+            .onChange(of: workspace.debugDispatchFolder) { _, f in
+                guard let f else { return }
+                if f.path == "?" { choosingServerFolder = true } else { serverFolder = f }
+                workspace.debugDispatchFolder = nil
+            }
+            .task(id: placeKey) {
                 failure = nil
                 note = nil
+                repo = nil
+                if let server, let serverFolder {
+                    // One ssh: does the folder exist, and is it in a repository?
+                    probing = true
+                    defer { probing = false }
+                    do {
+                        let p = try await RemoteGit.probe(server, directory: serverFolder.path)
+                        if let branch = p.branch, let container = p.container {
+                            repo = RepoInfo(branch: branch, container: p.abbreviating(container))
+                        }
+                    } catch {
+                        failure = error.localizedDescription
+                    }
+                    return
+                }
                 let dir = folder
                 repo = await Task.detached(priority: .utility) { () -> RepoInfo? in
                     guard let main = Git.mainCheckout(of: dir), let branch = Git.branch(in: dir) else { return nil }
-                    return RepoInfo(branch: branch, container: main + ".worktrees")
+                    return RepoInfo(branch: branch, container: (main + ".worktrees").abbreviatingHome)
                 }.value
             }
         }
@@ -364,14 +425,15 @@ private struct AgentDispatchBar: View {
                 Text("基于 \(repo.branch)")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text("→ " + ((repo.container as NSString).appendingPathComponent(Git.folderName(for: effectiveBranch))).abbreviatingHome)
+                Text("→ " + (server.map { "\($0.name)：" } ?? "")
+                     + (repo.container as NSString).appendingPathComponent(Git.folderName(for: effectiveBranch)))
                     .font(.caption.monospaced())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.head)
                     .help("从主仓库复制 .worktreeinclude 里列出的、被 git 忽略的文件（和 Orca 同一个格式）；没有这个文件时复制根目录的 .env*")
             } else {
-                Text("直接在 \((folder as NSString).lastPathComponent) 现在的工作区里改（\(repo.branch)）")
+                Text("直接在 \(((serverFolder?.path ?? folder) as NSString).lastPathComponent) 现在的工作区里改（\(repo.branch)）")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -384,13 +446,20 @@ private struct AgentDispatchBar: View {
         guard !busy, let agent, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let text = prompt, dir = folder
         let worktree = isolating ? effectiveBranch : nil
+        let remote = server.flatMap { host in serverFolder.map { (host, $0.path) } }
         busy = true
         failure = nil
         note = nil
         Task {
             defer { busy = false }
             do {
-                if let session = try await workspace.dispatch(text, to: agent, in: dir, worktree: worktree) {
+                let session: AgentSession?
+                if let (host, path) = remote {
+                    session = try await workspace.dispatch(text, to: agent, on: host, in: path, worktree: worktree)
+                } else {
+                    session = try await workspace.dispatch(text, to: agent, in: dir, worktree: worktree)
+                }
+                if let session {
                     prompt = ""
                     branch = ""
                     note = session.setupNote
@@ -407,7 +476,77 @@ private struct AgentDispatchBar: View {
         panel.canChooseFiles = false
         panel.directoryURL = URL(fileURLWithPath: folder)
         panel.prompt = "在此派发"
-        if panel.runModal() == .OK, let url = panel.url { directory = url.path }
+        if panel.runModal() == .OK, let url = panel.url {
+            directory = url.path
+            serverFolder = nil
+        }
+    }
+
+    private var recentServerFolders: [(host: RemoteHost, folder: RemoteFolder)] {
+        workspace.recentRemoteFolders.compactMap { f in
+            workspace.hosts.first { $0.id == f.hostID }.map { (host: $0, folder: f) }
+        }
+    }
+}
+
+/// Which server, and which folder on it, a task goes to.
+private struct ServerFolderPicker: View {
+    let initial: RemoteFolder?
+    let done: (RemoteFolder) -> Void
+    @EnvironmentObject private var workspace: Workspace
+    /// A saved server's id, or "alias:<name>" for an ~/.ssh/config entry.
+    @State private var choice = ""
+    @State private var path = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("派到服务器上的文件夹").font(.headline)
+            Picker("服务器", selection: $choice) {
+                ForEach(workspace.hosts) { h in Text(h.name).tag(h.id.uuidString) }
+                let aliases = workspace.sshConfigAliases.filter { !workspace.gitHostingAliases.contains($0) }
+                if !aliases.isEmpty {
+                    Divider()
+                    ForEach(aliases, id: \.self) { a in Text("\(a)（~/.ssh/config）").tag("alias:" + a) }
+                }
+            }
+            TextField("文件夹", text: $path, prompt: Text("~/src/project"))
+                .font(.body.monospaced())
+                .onSubmit(confirm)
+            Text("在服务器上用 git 建 worktree，Agent 在 tmux 会话里跑；服务器上不装任何东西。")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("确定", action: confirm)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(choice.isEmpty || path.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 340)
+        .onAppear {
+            let host = initial.flatMap { f in workspace.hosts.first { $0.id == f.hostID } } ?? workspace.hosts.first
+            choice = host?.id.uuidString ?? workspace.sshConfigAliases.first.map { "alias:" + $0 } ?? ""
+            path = initial?.path ?? host?.remoteDirectory.flatMap { $0.isEmpty ? nil : $0 } ?? "~"
+        }
+    }
+
+    private func confirm() {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty else { return }
+        let host: RemoteHost
+        if choice.hasPrefix("alias:") {
+            let alias = String(choice.dropFirst(6))
+            // Saved like connecting to it does, so the task's session can reconnect.
+            host = workspace.hosts.first { $0.host == alias } ?? {
+                let h = RemoteHost.fromSSHConfig(alias: alias)
+                workspace.saveHost(h)
+                return h
+            }()
+        } else if let h = workspace.hosts.first(where: { $0.id.uuidString == choice }) {
+            host = h
+        } else { return }
+        done(RemoteFolder(hostID: host.id, path: p))
     }
 }
 

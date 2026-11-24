@@ -9,6 +9,8 @@ final class Workspace: ObservableObject {
         didSet { selected.map(clearAttention) }
     }
     @Published private(set) var recentDirectories: [String] = []
+    /// Server folders tasks were handed out in, newest first.
+    @Published private(set) var recentRemoteFolders: [RemoteFolder] = []
     /// Group names in display order. Sessions with `group == nil` show first.
     @Published private(set) var groups: [String] = []
     @Published var collapsedGroups: Set<String> = []
@@ -30,6 +32,8 @@ final class Workspace: ObservableObject {
     @Published var debugServerCommand: String?
     /// Set to open the host editor (new or existing host).
     @Published var editingHost: RemoteHost?
+    /// Debug hooks: point the dispatch bar at a server folder (path "?" opens its picker).
+    @Published var debugDispatchFolder: RemoteFolder?
     /// Set to open the remote-session picker for a host.
     @Published var pickingSessionFor: RemoteHost?
     private let hostStore = HostStore()
@@ -81,6 +85,7 @@ final class Workspace: ObservableObject {
         menuObserver = objectWillChange.sink { [weak self] _ in self?.queueMenuRefresh() }
         let saved = store.load()
         recentDirectories = saved.recentDirectories
+        recentRemoteFolders = saved.recentRemoteFolders
         groups = saved.groups
         hosts = hostStore.load()
         reloadSSHConfig()
@@ -119,7 +124,8 @@ final class Workspace: ObservableObject {
                 // Reconnect and re-attach: this is what "restore" means for servers.
                 if let host = hosts.first(where: { $0.id == ref.hostID }) {
                     let session = makeRemoteSession(host, sessionName: ref.sessionName, customName: s.customName,
-                                                    group: s.group, layout: s.layout)
+                                                    group: s.group, layout: s.layout, directory: ref.directory,
+                                                    worktree: s.worktree)
                     add(session, select: false)
                 }
                 continue
@@ -171,6 +177,13 @@ final class Workspace: ObservableObject {
         session.isFrontmost = { [weak self, weak session] in self?.selectedID == session?.id }
         session.onWorkspaceEvent = { [weak self] session, event in self?.handle(event, from: session) }
         session.detectAgent = { [weak self] title in self?.catalog.agent(runBy: title) }
+        if let hostID = session.worktree?.hostID {
+            session.remoteSnapshot = { [weak self] wt in
+                guard let host = self?.hosts.first(where: { $0.id == hostID }) else { return nil }
+                return await RemoteGit.snapshot(host, of: wt)
+            }
+            session.refreshGit()
+        }
         // Re-publish child changes so sidebar and Dock badge update.
         cancellables[session.id] = session.objectWillChange.sink { [weak self] _ in
             self?.sessionDidChange()
@@ -315,12 +328,76 @@ final class Workspace: ObservableObject {
         return session
     }
 
-    /// Close a session and remove its worktree folder. The branch and its
-    /// commits stay. Asks first when the worktree has uncommitted changes.
+    /// Hand a task to an agent on a server, in a tmux session there (a plain
+    /// shell if it has none), started with the prompt and opened behind
+    /// whatever is on screen. With `worktree`, the task first gets a git
+    /// worktree of the folder's repository on that new branch, made on the
+    /// server, and the agent works there. Nothing is installed on the server.
+    @discardableResult
+    func dispatch(_ prompt: String, to kind: AgentKind, on host: RemoteHost, in directory: String,
+                  worktree branch: String? = nil) async throws -> AgentSession? {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, kind.canTakePrompt else { return nil }
+        // No hooks: they would run this Mac's Waitlight, which isn't there.
+        guard let line = kind.newConversation(prompt: text).line else { return nil }
+        let probe = try await RemoteGit.probe(host, directory: directory)
+        var worktree: WorktreeRef?
+        var note: String?
+        if let branch {
+            (worktree, note) = try await RemoteGit.addWorktree(host, at: probe, branch: branch)
+        }
+        // The tmux session is named after the branch (or the task), and must
+        // be new: an existing one would be attached instead of started.
+        let base = SSH.sessionName(Git.folderName(for: worktree?.branch ?? Git.branchName(for: text)))
+        let used = Set(probe.tmuxSessions).union(sessions.compactMap {
+            $0.remote?.hostID == host.id ? $0.remote?.sessionName : nil
+        })
+        var name = base
+        for n in 2...999 where used.contains(name) { name = "\(base)-\(n)" }
+        let session = makeRemoteSession(host, sessionName: name,
+                                        customName: text.count > 40 ? String(text.prefix(40)) + "…" : text,
+                                        directory: worktree?.path ?? probe.directory, startLine: line,
+                                        worktree: worktree)
+        session.setupNote = note
+        add(session, select: false)
+        rememberRemote(RemoteFolder(hostID: host.id, path: directory))
+        noteConnected(host)
+        persist()
+        return session
+    }
+
+    /// Close a session and remove its worktree folder (on its server, if it
+    /// is on one). The branch and its commits stay. Asks first when the
+    /// worktree has uncommitted changes.
     func closeRemovingWorktree(_ session: AgentSession) {
         guard let worktree = session.worktree else { return close(session) }
+        let isDirty: () async throws -> Bool
+        let remove: (Bool) async throws -> Void
+        if let hostID = worktree.hostID {
+            guard let host = hosts.first(where: { $0.id == hostID }) else {
+                let alert = NSAlert()
+                alert.messageText = "找不到 worktree 所在的服务器"
+                alert.informativeText = "这台服务器已经从 Waitlight 删除了，worktree 还在服务器上：\(worktree.path)"
+                alert.runModal()
+                return
+            }
+            let tmux = session.remote?.sessionName
+            isDirty = { try await RemoteGit.hasUncommittedChanges(host, worktree) }
+            remove = { force in try await RemoteGit.removeWorktree(host, worktree, force: force, tmuxSession: tmux) }
+        } else {
+            isDirty = { await Task.detached { Git.hasUncommittedChanges(worktree) }.value }
+            remove = { force in try await Task.detached { try Git.removeWorktree(worktree, force: force) }.value }
+        }
+        let place = worktree.hostID == nil ? worktree.path.abbreviatingHome : worktree.path
         Task {
-            let dirty = await Task.detached { Git.hasUncommittedChanges(worktree) }.value
+            let dirty: Bool
+            do { dirty = try await isDirty() } catch {
+                let alert = NSAlert()
+                alert.messageText = "没能查看 worktree 的改动"
+                alert.informativeText = "\(place)\n\n\(error.localizedDescription)"
+                alert.runModal()
+                return
+            }
             if dirty {
                 let alert = NSAlert()
                 alert.messageText = "“\(worktree.branch)”还有没提交的改动"
@@ -332,11 +409,11 @@ final class Workspace: ObservableObject {
             }
             close(session)
             do {
-                try await Task.detached { try Git.removeWorktree(worktree, force: dirty) }.value
+                try await remove(dirty)
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "没能删除 worktree"
-                alert.informativeText = "\(worktree.path.abbreviatingHome)\n\n\(error.localizedDescription)"
+                alert.informativeText = "\(place)\n\n\(error.localizedDescription)"
                 alert.runModal()
             }
         }
@@ -616,15 +693,22 @@ final class Workspace: ObservableObject {
         return "\(base)-\(n)"
     }
 
+    /// - Parameters:
+    ///   - directory: where on the server to work, if not the host's folder.
+    ///   - startLine: run first in a new tmux session (a task's agent).
     private func makeRemoteSession(_ host: RemoteHost, sessionName: String?, customName: String? = nil,
-                                   group: String? = nil, layout: PaneNode.Layout? = nil) -> AgentSession {
+                                   group: String? = nil, layout: PaneNode.Layout? = nil,
+                                   directory: String? = nil, startLine: String? = nil,
+                                   worktree: WorktreeRef? = nil) -> AgentSession {
         let name = host.persistence.usesSessionName ? (sessionName ?? freshSessionName(for: host)) : nil
         return AgentSession(kind: .ssh, directory: NSHomeDirectory(), customName: customName,
                             group: group ?? host.group, layout: layout,
-                            remote: RemoteRef(hostID: host.id, sessionName: name),
+                            remote: RemoteRef(hostID: host.id, sessionName: name, directory: directory),
                             remoteName: host.name,
                             remoteLabel: label(for: host, sessionName: name),
-                            connectCommand: SSH.commandLine(for: host, sessionName: name))
+                            connectCommand: SSH.commandLine(for: host, sessionName: name,
+                                                            directory: directory, startLine: startLine),
+                            worktree: worktree)
     }
 
     /// Open a session on a server. `sessionName` attaches to an existing
@@ -669,7 +753,8 @@ final class Workspace: ObservableObject {
     /// Reconnect with the host's *current* settings (they may have been edited).
     func reconnect(_ session: AgentSession) {
         guard let host = host(for: session) else { return }
-        session.reconnect(with: SSH.commandLine(for: host, sessionName: session.remote?.sessionName))
+        session.reconnect(with: SSH.commandLine(for: host, sessionName: session.remote?.sessionName,
+                                                directory: session.remote?.directory))
         noteConnected(host)
     }
 
@@ -790,6 +875,12 @@ final class Workspace: ObservableObject {
         recentDirectories = Array(recentDirectories.prefix(12))
     }
 
+    func rememberRemote(_ folder: RemoteFolder) {
+        recentRemoteFolders.removeAll { $0 == folder }
+        recentRemoteFolders.insert(folder, at: 0)
+        recentRemoteFolders = Array(recentRemoteFolders.prefix(12))
+    }
+
     func persist() {
         store.save(.init(
             sessions: orderedSessions.filter { !ephemeral.contains($0.id) }.map {
@@ -804,6 +895,7 @@ final class Workspace: ObservableObject {
                              worktree: $0.worktree)
             },
             recentDirectories: recentDirectories,
+            recentRemoteFolders: recentRemoteFolders,
             groups: groups))
     }
 
@@ -895,11 +987,14 @@ final class WorkspaceStore {
         }
         var sessions: [Session] = []
         var recentDirectories: [String] = []
+        var recentRemoteFolders: [RemoteFolder] = []
         var groups: [String] = []
 
-        init(sessions: [Session] = [], recentDirectories: [String] = [], groups: [String] = []) {
+        init(sessions: [Session] = [], recentDirectories: [String] = [],
+             recentRemoteFolders: [RemoteFolder] = [], groups: [String] = []) {
             self.sessions = sessions
             self.recentDirectories = recentDirectories
+            self.recentRemoteFolders = recentRemoteFolders
             self.groups = groups
         }
 
@@ -908,6 +1003,7 @@ final class WorkspaceStore {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             sessions = try c.decodeIfPresent([Session].self, forKey: .sessions) ?? []
             recentDirectories = try c.decodeIfPresent([String].self, forKey: .recentDirectories) ?? []
+            recentRemoteFolders = (try? c.decodeIfPresent([RemoteFolder].self, forKey: .recentRemoteFolders)) ?? []
             groups = try c.decodeIfPresent([String].self, forKey: .groups) ?? []
         }
     }
