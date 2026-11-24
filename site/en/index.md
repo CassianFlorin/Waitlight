@@ -47,7 +47,7 @@ Every agent carries a status light. Four colors, four meanings.
 
 - Waiting comes first: Agents that need you sort to the top, and the row says what each is waiting for and for how long.
 - Answer without leaving: Select a row to see the last lines of its terminal. Type and press Return, or press one of its option keys, and the answer is sent.
-- Hand out the next task: Pick the agent and the folder in the bar, write the task, press Return. A new agent starts in the background and you stay on the list. In a git repository the task gets its own worktree and branch by default, so agents working side by side never touch each other's files.
+- Hand out the next task: Pick the agent and the folder in the bar, write the task, press Return. A new agent starts in the background and you stay on the list. In a git repository the task gets its own worktree and branch by default, so agents working side by side never touch each other's files. The folder can be on a server too, and the worktree is then made on that server.
 - **Filter**: the field at the top matches name, agent, or folder. You can also group by folder.
 - **Pin**: right-click to pin an agent. It stays at the top whatever it is doing, and stays pinned after a relaunch.
 - **Branch and changes**: a session in a git repository shows its branch and lines changed (+31 −9), and the filter matches branches too. For a task in a worktree, right-click to close it and remove the worktree; the branch stays.
@@ -59,11 +59,12 @@ Every agent carries a status light. Four colors, four meanings.
 
 ## Local and remote, in the same sidebar.
 
-The sidebar is grouped by machine: one section for this Mac, one for each server with sessions open. Hosts from ~/.ssh/config work as they are, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was.
+The sidebar is grouped by machine: one section for this Mac, one for each server with sessions open. Hosts from ~/.ssh/config work as they are, with nothing to install on them. After a reconnect, a session running in tmux or zellij attaches right where it was. Tasks can go straight to a repository on a server, each in its own worktree there.
 
 - Servers include hosts you add and every alias in ~/.ssh/config, including files pulled in with Include. You can set the address, user, port, key or ssh-agent, and ProxyJump. Passwords go in the Keychain.
 - A pinned server always has its own section. The rest appear while they have sessions open and otherwise sit under Other servers. Open a server with nothing running yet and it lists the tmux or zellij sessions already on it, each with an Attach button.
 - Manage Servers lists every server in one table. Search it, set each one to pinned, auto, or hidden, test the connection, or attach to a session on the server. ~/.ssh/config is never modified.
+- **Tasks on a server**: in the dispatch bar's folder menu, choose 服务器上的文件夹… (a folder on a server), pick the server and type the repository path. The worktree is made with the server's own git in <repo>.worktrees/, and the server's .worktreeinclude is copied in by the same rules as here. The agent starts in a tmux session named after the branch; without tmux it runs in a plain shell that won't survive a disconnect. Reconnecting or relaunching the app returns to the same session and never sends the task again. The sidebar reads the branch and line counts over SSH, at most every 30 seconds, and right-click → Close and remove worktree works on the server too; the branch stays. Agents on a server don't report Working or Needs you yet: they are listed in the sidebar, not in the Agent overview.
 - Auto is the default: if the machine already has tmux or zellij, Waitlight uses it. If not, you get a normal login shell, with no prompt to install anything.
 - On reconnect, a session that was in tmux or zellij attaches again, so the agent is still there. Without a multiplexer, it logs in again in the directory you set, and the earlier processes are gone.
 - The performance panel follows the selected session. For SSH it samples that server over one connection: a small POSIX shell loop reading /proc, still with nothing to install. Remote sampling currently supports Linux only.
@@ -197,7 +198,7 @@ macOS 14 or later on Apple silicon. Install it with Homebrew, `brew install --ca
 
 ### Do I need to install anything on my servers?
 
-No. Waitlight uses plain SSH, and the hosts in `~/.ssh/config` just work. If the server has tmux or zellij, Waitlight uses it, so after a dropped connection it reattaches with the agent still running. The performance panel reads Linux's /proc over the same SSH connection.
+No. Waitlight uses plain SSH, and the hosts in `~/.ssh/config` just work. If the server has tmux or zellij, Waitlight uses it, so after a dropped connection it reattaches with the agent still running. The performance panel reads Linux's /proc over the same SSH connection. Handing a task to a repository on a server uses the server's own git for the worktree, still with nothing to install.
 
 ### How is it different from tabs in iTerm or tmux?
 
