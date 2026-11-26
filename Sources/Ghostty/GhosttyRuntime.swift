@@ -407,7 +407,14 @@ final class GhosttyRuntime {
             let m = String(cString: mimes[i])
             if isPlainText(m) { wanted = m; break }
         }
-        guard let mime = wanted, let text = PasteboardText.read(pb) else {
+        guard let mime = wanted else { return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE }
+        // A server session: files and images go to the server first, and
+        // their path there is pasted once they arrive.
+        if view.uploadToServer != nil, let files = PasteboardText.filesToUpload(pb) {
+            view.pasteOnServer(files)
+            return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
+        }
+        guard let text = PasteboardText.read(pb) else {
             return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
         }
 
@@ -476,6 +483,9 @@ final class GhosttyRuntime {
         }
     }
 
+    /// Remembered "以后都允许" for programs writing the clipboard (OSC 52).
+    private static let allowWritesKey = "allowClipboardWrites"
+
     private static func writeClipboard(
         _ ud: UnsafeMutableRawPointer?,
         location: ghostty_clipboard_e,
@@ -483,18 +493,35 @@ final class GhosttyRuntime {
         len: Int,
         confirm: Bool
     ) {
-        // Writes that libghostty says need confirmation (OSC 52 from a program)
-        // are dropped rather than silently overwriting the user's clipboard.
-        guard !confirm, let pb = pasteboard(location) else { return }
+        guard let pb = pasteboard(location) else { return }
+        var text: String?
         for i in 0..<len {
             let item = content[i]
             guard isPlainText(String(cString: item.mime)) else { continue }
-            let text = String(decoding: UnsafeRawBufferPointer(start: item.data, count: item.len), as: UTF8.self)
-            DispatchQueue.main.async {
-                pb.clearContents()
-                pb.setString(text, forType: .string)
+            text = String(decoding: UnsafeRawBufferPointer(start: item.data, count: item.len), as: UTF8.self)
+            break
+        }
+        guard let text else { return }
+        DispatchQueue.main.async {
+            // `clipboard-write = ask`: a program (tmux copying what you
+            // selected with the mouse, vim, …) wants to set the clipboard.
+            // Ask, as Ghostty does; dropping it silently made copying in a
+            // server's tmux do nothing at all.
+            if confirm && !UserDefaults.standard.bool(forKey: allowWritesKey) {
+                let alert = NSAlert()
+                alert.messageText = "终端里的程序要写入剪贴板"
+                alert.informativeText = "比如在服务器的 tmux 里用鼠标选中了文字。内容：\n\n" + String(text.prefix(600))
+                alert.addButton(withTitle: "允许")
+                alert.addButton(withTitle: "拒绝")
+                alert.showsSuppressionButton = true
+                alert.suppressionButton?.title = "以后都允许，不再询问"
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                if alert.suppressionButton?.state == .on {
+                    UserDefaults.standard.set(true, forKey: allowWritesKey)
+                }
             }
-            return
+            pb.clearContents()
+            pb.setString(text, forType: .string)
         }
     }
 }
