@@ -22,6 +22,21 @@ enum PasteboardText {
         return nil
     }
 
+    /// What a paste into a server session has to send there first: copied
+    /// files, or an image (saved locally as PNG). nil when the pasteboard
+    /// holds text, or anything that isn't a plain file (folders stay paths).
+    static func filesToUpload(_ pb: NSPasteboard) -> [URL]? {
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            let plain = urls.allSatisfy {
+                (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            }
+            return plain ? urls : nil
+        }
+        if pb.string(forType: .string) != nil { return nil }
+        return saveImage(from: pb).map { [URL(fileURLWithPath: $0)] }
+    }
+
     /// Writes an image on the pasteboard to ~/Library/Caches/Waitlight/pastes.
     static func saveImage(from pb: NSPasteboard) -> String? {
         let png: Data?

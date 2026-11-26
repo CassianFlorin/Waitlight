@@ -177,6 +177,14 @@ final class Workspace: ObservableObject {
         session.isFrontmost = { [weak self, weak session] in self?.selectedID == session?.id }
         session.onWorkspaceEvent = { [weak self] session, event in self?.handle(event, from: session) }
         session.detectAgent = { [weak self] title in self?.catalog.agent(runBy: title) }
+        if let hostID = session.remote?.hostID, let ssh = session.panes.first(where: { $0.isPrimary }) {
+            ssh.terminal.uploadToServer = { [weak self] file in
+                guard let host = self?.hosts.first(where: { $0.id == hostID }) else {
+                    return .failure(SSH.ProbeError(message: "找不到这台服务器的设置"))
+                }
+                return await SSH.upload(file, to: host)
+            }
+        }
         if let hostID = session.worktree?.hostID {
             session.remoteSnapshot = { [weak self] wt in
                 guard let host = self?.hosts.first(where: { $0.id == hostID }) else { return nil }

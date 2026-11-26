@@ -133,11 +133,20 @@ enum SSH {
     }
 
     /// Run a non-interactive command on the host (connection test, listing sessions).
+    /// With `input`, that file is the command's stdin.
     static func run(_ host: RemoteHost, command: String, timeout: TimeInterval = 15,
-                    verbose: Bool = false) async -> ProbeResult {
+                    verbose: Bool = false, input: URL? = nil) async -> ProbeResult {
         await withCheckedContinuation { cont in
             let p = backgroundProcess(host, command: command, verbose: verbose)
-            p.standardInput = FileHandle.nullDevice
+            if let input {
+                guard let fh = try? FileHandle(forReadingFrom: input) else {
+                    cont.resume(returning: ProbeResult(ok: false, output: "读不了 \(input.path)"))
+                    return
+                }
+                p.standardInput = fh
+            } else {
+                p.standardInput = FileHandle.nullDevice
+            }
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
@@ -166,6 +175,28 @@ enum SSH {
                 finish(ProbeResult(ok: false, output: "超时（\(Int(timeout)) 秒）"))
             }
         }
+    }
+
+    /// Copy a local file to the server, into ~/.cache/waitlight/pastes, and
+    /// return its path there. This is how a screenshot or a file pasted into
+    /// a server session reaches the server: a path on this Mac means nothing
+    /// to it.
+    static func upload(_ file: URL, to host: RemoteHost) async -> Result<String, ProbeError> {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        let base = String(file.lastPathComponent.map { $0.isLetter || $0.isNumber || ".-_".contains($0) ? $0 : "_" })
+        let name = base.hasPrefix("paste-") ? base : "\(fmt.string(from: Date()))-\(base)"
+        let script = "umask 077; d=\"$HOME/.cache/waitlight/pastes\"; mkdir -p \"$d\" && cat > \"$d\"/\(quote(name)) "
+            + "&& printf '@path %s\\n' \"$d\"/\(quote(name))"
+        // Through sh: the login shell may be fish, where `d=…` is no assignment.
+        let r = await run(host, command: "sh -c " + quote(script), timeout: 60, input: file)
+        let path = r.output.components(separatedBy: .newlines)
+            .last { $0.hasPrefix("@path ") }.map { String($0.dropFirst(6)) }
+        guard r.ok, let path, !path.isEmpty else {
+            let message = r.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure(ProbeError(message: message.isEmpty ? "上传失败" : message))
+        }
+        return .success(path)
     }
 
     /// A non-interactive ssh to `host` running `command`, not yet started.

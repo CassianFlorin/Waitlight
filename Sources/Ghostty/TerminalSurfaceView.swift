@@ -19,6 +19,10 @@ final class TerminalSurfaceView: NSView {
     /// pane they belong to.
     let paneID = UUID().uuidString
 
+    /// Set for a pane whose shell is ssh'd into a server: copies a local file
+    /// there and returns its path on the server, or why it couldn't.
+    var uploadToServer: ((URL) async -> Result<String, SSH.ProbeError>)?
+
     /// Command waiting to be typed once the shell's prompt is up.
     ///
     /// Writing it via ghostty's `initial_input` races the shell's startup: the
@@ -555,6 +559,28 @@ extension TerminalSurfaceView {
         typeText(text.hasSuffix("\n") ? String(text.dropLast()) + "\r" : text)
     }
 
+    /// Send `files` to the server, then paste their paths there.
+    func pasteOnServer(_ files: [URL]) {
+        guard let upload = uploadToServer else { return }
+        Task { @MainActor [weak self] in
+            var paths: [String] = []
+            for file in files {
+                switch await upload(file) {
+                case .success(let path):
+                    paths.append(PasteboardText.shellEscape(path))
+                case .failure(let error):
+                    NSSound.beep()
+                    let alert = NSAlert()
+                    alert.messageText = "没能把\(file.pathExtension.lowercased() == "png" ? "图片" : "文件")传到服务器上"
+                    alert.informativeText = String(error.message.prefix(600))
+                    alert.runModal()
+                    return
+                }
+            }
+            self?.insertPasteText(paths.joined(separator: " "))
+        }
+    }
+
     /// Insert text as if pasted (bracketed paste aware).
     func insertPasteText(_ text: String) {
         guard let surface, !text.isEmpty else { return }
@@ -573,6 +599,11 @@ extension TerminalSurfaceView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .copy }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if uploadToServer != nil, let files = PasteboardText.filesToUpload(sender.draggingPasteboard) {
+            pasteOnServer(files)
+            focus()
+            return true
+        }
         guard let text = PasteboardText.read(sender.draggingPasteboard) else { return false }
         insertPasteText(text)
         focus()
